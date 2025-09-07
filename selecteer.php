@@ -1,5 +1,5 @@
 <?php
-$allowedIps = ['127.0.0.1', '::1']; // IPv4 en IPv6 loopback toestaan
+$allowedIps = ['127.0.0.1', '::1', '83.83.22.123']; // IPv4 en IPv6 loopback toestaan
 
 $clientIp = $_SERVER['REMOTE_ADDR'] ?? '';
 
