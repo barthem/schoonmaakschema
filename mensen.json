@@ -1,0 +1,14 @@
+{
+    "Bart": {
+        "name": "Bart",
+        "missed": 0
+    },
+    "Erin": {
+        "name": "Erin",
+        "missed": 0
+    },
+    "Mara": {
+        "name": "Mara",
+        "missed": 0
+    }
+}

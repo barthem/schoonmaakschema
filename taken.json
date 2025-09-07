@@ -1,0 +1,11 @@
+[
+    { "name": "Harry onderhouden + draaien", "fixed_to": null },
+    { "name": "beneden dweilen", "fixed_to": null },
+    { "name": "Vuilnis Keuken wegbrengen", "fixed_to": null },
+    { "name": "Badkamer schoonmaken", "fixed_to": null },
+    { "name": "Trap naar boven schoonmaken", "fixed_to": "Erin" },
+    { "name": "WC schoonmaken", "fixed_to": "Mara" },
+    { "name": "Keuken schoonmaken", "fixed_to": null },
+    { "name": "kattenbak legen/vullen", "fixed_to": "Erin" },
+    { "name": "Trap naar beneden/halletje schoonmaken", "fixed_to": null }
+]
