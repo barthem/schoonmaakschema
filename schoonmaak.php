@@ -12,22 +12,22 @@
 declare(strict_types=1);
 session_start();
 
-$allowedIps = ['127.0.0.1', '::1']; // IPv4 en IPv6 loopback toestaan
+// $allowedIps = ['127.0.0.1', '::1', '83.83.22.123']; // IPv4 en IPv6 loopback toestaan
 
-$clientIp = $_SERVER['REMOTE_ADDR'] ?? '';
+// $clientIp = $_SERVER['REMOTE_ADDR'] ?? '';
 
-if (!in_array($clientIp, $allowedIps, true)) {
-    http_response_code(403);
-    echo "Toegang geweigerd";
-    exit;
-}
+// if (!in_array($clientIp, $allowedIps, true)) {
+//     http_response_code(403);
+//     echo "Toegang geweigerd";
+//     exit;
+// }
 
 /* ========== Config ========== */
 $peopleFile = __DIR__ . '/mensen.json';
 $tasksFile  = __DIR__ . '/taken.json';
 
 // Vaste start (bijv. een vrijdag). Weekindex = floor(days/7) vanaf deze datum.
-$startDate  = new DateTime('2025-01-03'); // <-- pas aan naar jullie echte startdatum
+$startDate  = new DateTime('2025-09-05'); // <-- pas aan naar jullie echte startdatum. 05-09 is een vrijdag
 
 /* ========== Helpers ========== */
 function readJson(string $path, $fallback) {
@@ -45,10 +45,22 @@ function weekIndex(DateTime $start, DateTime $today): int {
 }
 
 /**
- * Gebalanceerde roulatie:
+ * Bereken totaal potje van alle personen
+ */
+function calculateTotalPot(array $people): int {
+    $total = 0;
+    foreach ($people as $person) {
+        $missed = (int)($person['missed'] ?? 0);
+        $total += $missed * 5;
+    }
+    return $total;
+}
+
+/**
+ * Gebalanceerde roulatie met taak-variatie:
  * - Vaste taken eerst → verhogen 'load' van die persoon.
- * - Niet-vaste taken één voor één naar de persoon met de laagste load.
- * - Bij gelijke load wint de persoon die in de week-rotatie het vroegst komt (deterministisch).
+ * - Niet-vaste taken: voorkom dat iemand dezelfde taak meerdere weken achter elkaar krijgt.
+ * - Load balancing + taak-geschiedenis voor eerlijke verdeling.
  */
 function assignedForWeekBalanced(array $people, array $tasks, int $week): array {
     $personKeys = array_keys($people);
@@ -70,8 +82,19 @@ function assignedForWeekBalanced(array $people, array $tasks, int $week): array 
         }
     }
 
-    // 3) Week-rotatie voor tie-breaks (deterministisch per week)
-    //    Voorbeeld: week 0 => [p0,p1,p2], week 1 => [p1,p2,p0], ...
+    // 3) Geschiedenis van vorige week ophalen voor taak-variatie
+    $previousWeekHistory = [];
+    if ($week > 0) {
+        $prevPath = __DIR__ . "/status_" . ($week - 1) . ".json";
+        $prevStatus = readJson($prevPath, []);
+        foreach ($prevStatus as $taskName => $taskData) {
+            if (strpos($taskName, '__') !== 0 && isset($taskData['assigned_to'])) {
+                $previousWeekHistory[$taskName] = $taskData['assigned_to'];
+            }
+        }
+    }
+
+    // 4) Week-rotatie voor tie-breaks (deterministisch per week)
     $rot = [];
     for ($k = 0; $k < $n; $k++) {
         $rot[] = $personKeys[($week + $k) % $n];
@@ -79,12 +102,25 @@ function assignedForWeekBalanced(array $people, array $tasks, int $week): array 
     $rank = [];
     foreach ($rot as $pos => $pk) $rank[$pk] = $pos;
 
-    // 4) Niet-vaste taken verdelen
+    // 5) Niet-vaste taken verdelen met taak-variatie
     foreach ($unfixedIdx as $i) {
+        $taskName = $tasks[$i]['name'];
+        $lastAssignedTo = $previousWeekHistory[$taskName] ?? null;
+        
+        // Candidates: personen met laagste load
         $minLoad = min($load);
         $candidates = array_keys(array_filter($load, fn($v) => $v === $minLoad, ARRAY_FILTER_USE_BOTH));
-        usort($candidates, fn($a, $b) => $rank[$a] <=> $rank[$b]); // wie staat het vroegst in de rotatie
-        $chosen = $candidates[0];
+        
+        // Als mogelijk, vermijd persoon die deze taak vorige week deed
+        $preferred = array_filter($candidates, fn($p) => $p !== $lastAssignedTo);
+        
+        // Als er nog kandidaten over zijn na filtering, gebruik die. Anders alle kandidaten.
+        $finalCandidates = !empty($preferred) ? $preferred : $candidates;
+        
+        // Sorteer op week-rotatie voor deterministische keuze
+        usort($finalCandidates, fn($a, $b) => $rank[$a] <=> $rank[$b]);
+        
+        $chosen = $finalCandidates[0];
         $assigned[$i] = $chosen;
         $load[$chosen]++;
     }
@@ -227,8 +263,11 @@ foreach ($status as $name => $rec) {
     }
 }
 
+// Bereken totalen
 $meName = htmlspecialchars($people[$personKey]['name']);
 $missed = (int)($people[$personKey]['missed'] ?? 0);
+$myPot = $missed * 5;
+$totalPot = calculateTotalPot($people);
 ?>
 <!DOCTYPE html>
 <html lang="nl">
@@ -253,8 +292,10 @@ $missed = (int)($people[$personKey]['missed'] ?? 0);
         button, .btn { padding:10px 12px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer;transition:transform .12s ease, box-shadow .12s ease, background .12s ease;text-decoration:none;display:inline-block }
         button:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(0,0,0,.12)}
         .btn-secondary{background:#e5e7eb;color:#111827}
-        .money{font-weight:800}
+        .money{font-weight:800;color:#dc2626}
+        .money-big{font-size:1.2rem;color:#dc2626}
         .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+        .pot-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:16px}
         @media (max-width:520px){body{padding:14px}}
         .note{margin-top:10px;color:var(--muted);font-size:.92rem}
     </style>
@@ -270,15 +311,21 @@ $missed = (int)($people[$personKey]['missed'] ?? 0);
             <input type="hidden" name="action" value="logout">
             <button type="submit" class="btn btn-secondary">Wissel persoon</button>
         </form>
-        <a href="main.php" class="btn btn-secondary">Menu</a>
+        <a href="index.php" class="btn btn-secondary">Menu</a>
     </div>
 </header>
 
-<div class="row" style="margin-bottom:16px">
-    <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-        <div>
-            <div><strong>Pot‑stand <?= $meName ?></strong></div>
-            <div class="muted">Gemiste weken: <?= $missed ?> × €5 = <span class="money">€<?= $missed * 5 ?></span></div>
+<div class="row">
+    <div class="pot-cards">
+        <div class="card">
+            <div><strong>Jouw pot-stand</strong></div>
+            <div class="muted">Gemiste weken: <?= $missed ?></div>
+            <div class="money">€<?= $myPot ?></div>
+        </div>
+        <div class="card" style="background:linear-gradient(135deg, #fee2e2, #fef2f2);">
+            <div><strong>🏆 Totale pot</strong></div>
+            <div class="muted">Alle huisgenoten samen</div>
+            <div class="money money-big">€<?= $totalPot ?></div>
         </div>
     </div>
 </div>
@@ -303,7 +350,7 @@ $missed = (int)($people[$personKey]['missed'] ?? 0);
                             <button type="submit">Afvinken</button>
                         </form>
                     <?php endif; ?>
-                    <div class="note">Status staat in <code>status_<?= (int)$wIndex ?>.json</code>.</div>
+                    <!-- <div class="note">Status staat in <code>status_<?= (int)$wIndex ?>.json</code>.</div> -->
                 </div>
             <?php endforeach; ?>
         <?php endif; ?>
