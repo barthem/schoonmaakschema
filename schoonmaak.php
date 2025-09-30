@@ -8,19 +8,10 @@
 // - Voor de huidige week: status_<week>.json bestaat/wordt aangemaakt met alle taken (assigned_to, done=false).
 // - Afvinken zet done=true + done_by/done_at in status_<week>.json.
 // - Roulatie is nu EERLIJK/gebalanceerd obv vaste startdatum: vaste taken eerst, niet‑vaste naar laagste load met roterende tie-break.
+// - NIEUW: Support voor biweekly taken via frequency attribuut
 
 declare(strict_types=1);
 session_start();
-
-// $allowedIps = ['127.0.0.1', '::1', '83.83.22.123']; // IPv4 en IPv6 loopback toestaan
-
-// $clientIp = $_SERVER['REMOTE_ADDR'] ?? '';
-
-// if (!in_array($clientIp, $allowedIps, true)) {
-//     http_response_code(403);
-//     echo "Toegang geweigerd";
-//     exit;
-// }
 
 /* ========== Config ========== */
 $peopleFile = __DIR__ . '/mensen.json';
@@ -42,6 +33,29 @@ function writeJson(string $path, $data): void {
 function weekIndex(DateTime $start, DateTime $today): int {
     $days = (int)$start->diff($today)->days;
     return intdiv(max(0, $days), 7);
+}
+
+/**
+ * Check of een taak actief is in een bepaalde week
+ */
+function isTaskActiveInWeek(array $task, int $week): bool {
+    $frequency = $task['frequency'] ?? 'weekly';
+    
+    if ($frequency === 'biweekly') {
+        // Tweewekelijks: alleen in even of oneven weken
+        // We gebruiken modulo 2 om te bepalen of de taak actief is
+        return ($week % 2) === 1; // Je kunt dit aanpassen naar ($week % 2) === 1 voor oneven weken
+    }
+    
+    // Default: weekly
+    return true;
+}
+
+/**
+ * Filter taken voor een specifieke week op basis van frequency
+ */
+function getActiveTasksForWeek(array $tasks, int $week): array {
+    return array_filter($tasks, fn($task) => isTaskActiveInWeek($task, $week));
 }
 
 /**
@@ -82,14 +96,23 @@ function assignedForWeekBalanced(array $people, array $tasks, int $week): array 
         }
     }
 
-    // 3) Geschiedenis van vorige week ophalen voor taak-variatie
+    // 3) Geschiedenis van vorige week(en) ophalen voor taak-variatie
     $previousWeekHistory = [];
     if ($week > 0) {
-        $prevPath = __DIR__ . "/status_" . ($week - 1) . ".json";
-        $prevStatus = readJson($prevPath, []);
-        foreach ($prevStatus as $taskName => $taskData) {
-            if (strpos($taskName, '__') !== 0 && isset($taskData['assigned_to'])) {
-                $previousWeekHistory[$taskName] = $taskData['assigned_to'];
+        // Voor biweekly taken kijken we 2 weken terug
+        for ($lookback = 1; $lookback <= 2; $lookback++) {
+            $prevWeek = $week - $lookback;
+            if ($prevWeek < 0) break;
+            
+            $prevPath = __DIR__ . "/status_{$prevWeek}.json";
+            $prevStatus = readJson($prevPath, []);
+            foreach ($prevStatus as $taskName => $taskData) {
+                if (strpos($taskName, '__') !== 0 && isset($taskData['assigned_to'])) {
+                    // Bewaar alleen als we deze taak nog niet hebben gezien
+                    if (!isset($previousWeekHistory[$taskName])) {
+                        $previousWeekHistory[$taskName] = $taskData['assigned_to'];
+                    }
+                }
             }
         }
     }
@@ -111,7 +134,7 @@ function assignedForWeekBalanced(array $people, array $tasks, int $week): array 
         $minLoad = min($load);
         $candidates = array_keys(array_filter($load, fn($v) => $v === $minLoad, ARRAY_FILTER_USE_BOTH));
         
-        // Als mogelijk, vermijd persoon die deze taak vorige week deed
+        // Als mogelijk, vermijd persoon die deze taak vorige keer deed
         $preferred = array_filter($candidates, fn($p) => $p !== $lastAssignedTo);
         
         // Als er nog kandidaten over zijn na filtering, gebruik die. Anders alle kandidaten.
@@ -129,18 +152,25 @@ function assignedForWeekBalanced(array $people, array $tasks, int $week): array 
     return $assigned;
 }
 
-function ensureCurrentWeekStatus(string $path, array $people, array $tasks, int $week): array {
-    // Zorg dat er een statusbestand is voor de huidige week; zo niet, maak het aan met alle actuele taken.
+function ensureCurrentWeekStatus(string $path, array $people, array $allTasks, int $week): array {
+    // Zorg dat er een statusbestand is voor de huidige week; zo niet, maak het aan met alleen actieve taken.
     $status = readJson($path, []);
     if (empty($status)) {
-        $assigned = assignedForWeekBalanced($people, $tasks, $week);
+        // Filter taken op basis van frequency
+        $activeTasks = getActiveTasksForWeek($allTasks, $week);
+        
+        // Herindex de array voor correcte toewijzing
+        $activeTasks = array_values($activeTasks);
+        
+        $assigned = assignedForWeekBalanced($people, $activeTasks, $week);
         $status = ['__finalized' => false];
-        foreach ($tasks as $i => $t) {
+        foreach ($activeTasks as $i => $t) {
             $name  = $t['name'];
             $owner = $assigned[$i] ?? null;
             $status[$name] = [
                 'assigned_to' => $owner,
-                'done'        => false
+                'done'        => false,
+                'frequency'   => $t['frequency'] ?? 'weekly'
             ];
         }
         writeJson($path, $status);
@@ -189,14 +219,6 @@ $wIndex  = weekIndex($startDate, $today);
 $curPath = __DIR__ . "/status_{$wIndex}.json";
 
 /* ========== Finaliseer ALLE vorige weken die nog open staan (boete 1x p.p. p.week) ========== */
-/*
-   Voor elk status_<k>.json met k < huidige week (wIndex):
-   - Als __finalized nog niet gezet is:
-     * bouw set $weekMissed[personKey] = true voor alle taken met done=false
-     * na de loop: voor elke personKey in weekMissed => people[personKey].missed++
-     * zet __finalized met timestamp
-   We maken GEEN oude statusbestanden aan als ze niet bestaan.
-*/
 $indices = allStatusIndices();
 foreach ($indices as $idx) {
     if ($idx >= $wIndex) break; // alleen oudere weken
@@ -256,9 +278,10 @@ foreach ($status as $name => $rec) {
     if (strpos($name, '__') === 0) continue; // meta overslaan
     if (($rec['assigned_to'] ?? null) === $personKey) {
         $myTasks[] = [
-            'name'    => $name,
-            'done'    => (bool)($rec['done'] ?? false),
-            'done_at' => $rec['done_at'] ?? null
+            'name'      => $name,
+            'done'      => (bool)($rec['done'] ?? false),
+            'done_at'   => $rec['done_at'] ?? null,
+            'frequency' => $rec['frequency'] ?? 'weekly'
         ];
     }
 }
@@ -283,6 +306,7 @@ $totalPot = calculateTotalPot($people);
         h1{font-size:1.4rem;margin:0}
         .muted{color:var(--muted)}
         .pill{display:inline-block;padding:.25rem .6rem;border-radius:999px;background:#eef2ff;color:#3730a3;font-weight:600}
+        .pill-biweekly{background:#fef3c7;color:#92400e}
         .row{max-width:980px;margin:0 auto}
         .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
         .card{background:var(--card);border-radius:12px;box-shadow:var(--shadow);padding:14px}
@@ -296,6 +320,7 @@ $totalPot = calculateTotalPot($people);
         .money-big{font-size:1.2rem;color:#dc2626}
         .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
         .pot-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:16px}
+        .frequency-badge{display:inline-block;font-size:.8rem;margin-left:6px}
         @media (max-width:520px){body{padding:14px}}
         .note{margin-top:10px;color:var(--muted);font-size:.92rem}
     </style>
@@ -340,7 +365,12 @@ $totalPot = calculateTotalPot($people);
         <?php else: ?>
             <?php foreach ($myTasks as $t): ?>
                 <div class="card <?= $t['done'] ? 'done' : '' ?>">
-                    <h3><?= htmlspecialchars($t['name']) ?></h3>
+                    <h3>
+                        <?= htmlspecialchars($t['name']) ?>
+                        <?php if (($t['frequency'] ?? 'weekly') === 'biweekly'): ?>
+                            <span class="pill pill-biweekly frequency-badge">2-wekelijks</span>
+                        <?php endif; ?>
+                    </h3>
                     <?php if ($t['done']): ?>
                         <div>✅ Afgevinkt<?= $t['done_at'] ? ' op <strong>'.htmlspecialchars($t['done_at']).'</strong>' : '' ?></div>
                     <?php else: ?>
@@ -350,7 +380,6 @@ $totalPot = calculateTotalPot($people);
                             <button type="submit">Afvinken</button>
                         </form>
                     <?php endif; ?>
-                    <!-- <div class="note">Status staat in <code>status_<?= (int)$wIndex ?>.json</code>.</div> -->
                 </div>
             <?php endforeach; ?>
         <?php endif; ?>
