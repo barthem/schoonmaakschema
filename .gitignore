@@ -1,0 +1,17 @@
+# Status bestanden (week tracking)
+status_*.json
+
+# Eventuele backup bestanden
+*.bak
+*.backup
+
+# OS bestanden
+.DS_Store
+Thumbs.db
+
+# IDE/Editor bestanden
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
