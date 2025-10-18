@@ -1,14 +1,4 @@
 <?php
-// $allowedIps = ['127.0.0.1', '::1', '83.83.22.123']; // IPv4 en IPv6 loopback toestaan
-
-// $clientIp = $_SERVER['REMOTE_ADDR'] ?? '';
-
-// if (!in_array($clientIp, $allowedIps, true)) {
-//     http_response_code(403);
-//     echo "Toegang geweigerd";
-//     exit;
-// }
-
 // selecteer.php
 // Leest mensen uit mensen.json en post de gekozen persoon naar schoonmaakschema.php
 

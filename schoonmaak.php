@@ -37,14 +37,15 @@ function weekIndex(DateTime $start, DateTime $today): int {
 
 /**
  * Check of een taak actief is in een bepaalde week
+ * Voor biweekly: kies even weken (0,2,4...) of oneven weken (1,3,5...)
  */
 function isTaskActiveInWeek(array $task, int $week): bool {
     $frequency = $task['frequency'] ?? 'weekly';
     
     if ($frequency === 'biweekly') {
-        // Tweewekelijks: alleen in even of oneven weken
-        // We gebruiken modulo 2 om te bepalen of de taak actief is
-        return ($week % 2) === 1; // Je kunt dit aanpassen naar ($week % 2) === 1 voor oneven weken
+        // Tweewekelijks: alleen in even weken (0,2,4,6...)
+        // Verander naar ($week % 2) === 1 voor oneven weken (1,3,5,7...)
+        return ($week % 2) === 1;
     }
     
     // Default: weekly
@@ -75,6 +76,8 @@ function calculateTotalPot(array $people): int {
  * - Vaste taken eerst → verhogen 'load' van die persoon.
  * - Niet-vaste taken: voorkom dat iemand dezelfde taak meerdere weken achter elkaar krijgt.
  * - Load balancing + taak-geschiedenis voor eerlijke verdeling.
+ * 
+ * LET OP: Deze functie krijgt al gefilterde taken (alleen actieve taken voor deze week)
  */
 function assignedForWeekBalanced(array $people, array $tasks, int $week): array {
     $personKeys = array_keys($people);
@@ -97,9 +100,10 @@ function assignedForWeekBalanced(array $people, array $tasks, int $week): array 
     }
 
     // 3) Geschiedenis van vorige week(en) ophalen voor taak-variatie
+    // Voor biweekly taken kijken we 2 weken terug, voor weekly 1 week
     $previousWeekHistory = [];
     if ($week > 0) {
-        // Voor biweekly taken kijken we 2 weken terug
+        // Kijk maximaal 2 weken terug voor taak-variatie
         for ($lookback = 1; $lookback <= 2; $lookback++) {
             $prevWeek = $week - $lookback;
             if ($prevWeek < 0) break;
@@ -109,6 +113,7 @@ function assignedForWeekBalanced(array $people, array $tasks, int $week): array 
             foreach ($prevStatus as $taskName => $taskData) {
                 if (strpos($taskName, '__') !== 0 && isset($taskData['assigned_to'])) {
                     // Bewaar alleen als we deze taak nog niet hebben gezien
+                    // (meest recente toewijzing heeft voorrang)
                     if (!isset($previousWeekHistory[$taskName])) {
                         $previousWeekHistory[$taskName] = $taskData['assigned_to'];
                     }
@@ -152,17 +157,24 @@ function assignedForWeekBalanced(array $people, array $tasks, int $week): array 
     return $assigned;
 }
 
+/**
+ * Zorg dat er een statusbestand is voor de huidige week
+ * GEFIXED: Filter taken op frequency VOOR toewijzing
+ */
 function ensureCurrentWeekStatus(string $path, array $people, array $allTasks, int $week): array {
     // Zorg dat er een statusbestand is voor de huidige week; zo niet, maak het aan met alleen actieve taken.
     $status = readJson($path, []);
     if (empty($status)) {
-        // Filter taken op basis van frequency
+        // Filter taken op basis van frequency (weekly vs biweekly)
         $activeTasks = getActiveTasksForWeek($allTasks, $week);
         
-        // Herindex de array voor correcte toewijzing
+        // Herindex de array voor correcte toewijzing (zodat indices 0,1,2... zijn)
         $activeTasks = array_values($activeTasks);
         
+        // Wijs actieve taken toe aan personen met load balancing
         $assigned = assignedForWeekBalanced($people, $activeTasks, $week);
+        
+        // Maak status-entries voor alle actieve taken
         $status = ['__finalized' => false];
         foreach ($activeTasks as $i => $t) {
             $name  = $t['name'];
@@ -177,6 +189,7 @@ function ensureCurrentWeekStatus(string $path, array $people, array $allTasks, i
     }
     return $status;
 }
+
 function allStatusIndices(): array {
     $files = glob(__DIR__ . '/status_*.json');
     $out = [];

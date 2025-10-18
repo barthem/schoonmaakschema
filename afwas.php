@@ -20,24 +20,24 @@ $days = [
 
 // Twee patronen die per ISO-weeknummer afwisselen (doordeweeks).
 $patternA = [
-  1 => ['Bart', 'Mara'],   // Ma: afwassen, afdrogen
-  2 => ['Erin', 'Mara'],   // Di
-  3 => ['Bart', 'Erin'],   // Wo
-  4 => ['Mara', 'Bart'],   // Do
-  5 => ['Mara', 'Erin'],   // Vr
+  1 => ['Mara', 'Bart'],  // Ma
+  2 => ['Mara', 'Erin'],  // Di
+  3 => ['Mara', 'Bart'],  // Wo
+  4 => ['Mara', 'Erin'],  // Do
+  5 => ['Bart', 'Mara'],  // Vr
 ];
 $patternB = [
-  1 => ['Erin', 'Mara'],   // Ma
-  2 => ['Bart', 'Mara'],   // Di
-  3 => ['Erin', 'Bart'],   // Wo
-  4 => ['Mara', 'Erin'],   // Do
-  5 => ['Bart', 'Erin'],   // Vr
+  1 => ['Mara', 'Erin'],  // Ma
+  2 => ['Mara', 'Bart'],  // Di
+  3 => ['Mara', 'Erin'],  // Wo
+  4 => ['Bart', 'Mara'],  // Do
+  5 => ['Erin', 'Bart'],  // Vr
 ];
 
 // Weekend is vast: Mara staat er niet op.
 $weekend = [
-  6 => ['Bart', 'Erin'],   // Za
-  7 => ['Erin', 'Bart'],   // Zo
+  6 => ['Bart', 'Erin'],  // Za
+  7 => ['Erin', 'Bart'],  // Zo
 ];
 
 $isoWeek  = (int)date('W');       // ISO-weeknummer
