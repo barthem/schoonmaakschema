@@ -10,5 +10,7 @@
     { "name": "Trap naar beneden/halletje schoonmaken", "fixed_to": null, "frequency": "weekly" },
     { "name": "woonkamer stoffen/stofzuigen", "fixed_to": null, "frequency": "weekly" },
     { "name": "cavia schoonmaken", "fixed_to": "Bart", "frequency": "biweekly" },
-    { "name": "witte trapleuning naar boven afnemen", "fixed_to": null, "frequency": "biweekly" }
+    { "name": "witte trapleuning naar boven afnemen", "fixed_to": null, "frequency": "biweekly" },
+    { "name": "Glass wegbrengen naar glasbak", "fixed_to": null, "frequency": "biweekly" }
+
 ]
