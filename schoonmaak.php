@@ -9,6 +9,7 @@
 // - Afvinken zet done=true + done_by/done_at in status_<week>.json.
 // - Roulatie is nu EERLIJK/gebalanceerd obv vaste startdatum: vaste taken eerst, niet‑vaste naar laagste load met roterende tie-break.
 // - NIEUW: Support voor biweekly taken via frequency attribuut
+// - NIEUW: Pinned badge voor taken met fixed_to
 
 declare(strict_types=1);
 session_start();
@@ -18,7 +19,7 @@ $peopleFile = __DIR__ . '/mensen.json';
 $tasksFile  = __DIR__ . '/taken.json';
 
 // Vaste start (bijv. een vrijdag). Weekindex = floor(days/7) vanaf deze datum.
-$startDate  = new DateTime('2025-09-05'); // <-- pas aan naar jullie echte startdatum. 05-09 is een vrijdag
+$startDate  = new DateTime('2025-09-06'); // <-- pas aan naar jullie echte startdatum. 05-09 is een vrijdag, 06-09 is een zaterdag
 
 /* ========== Helpers ========== */
 function readJson(string $path, $fallback) {
@@ -158,8 +159,34 @@ function assignedForWeekBalanced(array $people, array $tasks, int $week): array 
 }
 
 /**
+ * Haal carry-over biweekly taken op van de vorige week
+ */
+function getCarryoverTasks(int $currentWeek, array $allTasks): array {
+    if ($currentWeek <= 0) return [];
+    
+    $prevPath = __DIR__ . "/status_" . ($currentWeek - 1) . ".json";
+    $prevStatus = readJson($prevPath, []);
+    
+    $carryoverNames = $prevStatus['__carryover_biweekly'] ?? [];
+    if (empty($carryoverNames)) return [];
+    
+    // Zoek de taak-definities op in allTasks
+    $carryoverTasks = [];
+    foreach ($allTasks as $task) {
+        if (in_array($task['name'], $carryoverNames, true)) {
+            // Markeer als carryover zodat we het kunnen tonen in de UI
+            $task['is_carryover'] = true;
+            $carryoverTasks[] = $task;
+        }
+    }
+    
+    return $carryoverTasks;
+}
+
+/**
  * Zorg dat er een statusbestand is voor de huidige week
  * GEFIXED: Filter taken op frequency VOOR toewijzing
+ * NIEUW: Voeg carry-over biweekly taken toe van vorige week
  */
 function ensureCurrentWeekStatus(string $path, array $people, array $allTasks, int $week): array {
     // Zorg dat er een statusbestand is voor de huidige week; zo niet, maak het aan met alleen actieve taken.
@@ -167,6 +194,17 @@ function ensureCurrentWeekStatus(string $path, array $people, array $allTasks, i
     if (empty($status)) {
         // Filter taken op basis van frequency (weekly vs biweekly)
         $activeTasks = getActiveTasksForWeek($allTasks, $week);
+        
+        // Haal carry-over biweekly taken op van vorige week
+        $carryoverTasks = getCarryoverTasks($week, $allTasks);
+        
+        // Voeg carry-over taken toe (alleen als ze niet al in activeTasks zitten)
+        $activeTaskNames = array_column($activeTasks, 'name');
+        foreach ($carryoverTasks as $ct) {
+            if (!in_array($ct['name'], $activeTaskNames, true)) {
+                $activeTasks[] = $ct;
+            }
+        }
         
         // Herindex de array voor correcte toewijzing (zodat indices 0,1,2... zijn)
         $activeTasks = array_values($activeTasks);
@@ -182,7 +220,9 @@ function ensureCurrentWeekStatus(string $path, array $people, array $allTasks, i
             $status[$name] = [
                 'assigned_to' => $owner,
                 'done'        => false,
-                'frequency'   => $t['frequency'] ?? 'weekly'
+                'frequency'   => $t['frequency'] ?? 'weekly',
+                'fixed_to'    => $t['fixed_to'] ?? null,
+                'is_carryover' => $t['is_carryover'] ?? false
             ];
         }
         writeJson($path, $status);
@@ -242,12 +282,21 @@ foreach ($indices as $idx) {
     }
 
     $weekMissed = []; // personKey => true (max 1 boete per week)
+    $carryoverBiweekly = []; // niet-afgeronde biweekly taken voor volgende week
+    
     foreach ($st as $taskName => $rec) {
         if (strpos($taskName, '__') === 0) continue; // meta overslaan
         $assignedTo = $rec['assigned_to'] ?? null;
         $done       = (bool)($rec['done'] ?? false);
+        $frequency  = $rec['frequency'] ?? 'weekly';
+        
         if ($assignedTo && !$done) {
             $weekMissed[$assignedTo] = true;
+            
+            // Biweekly taken die niet af zijn: doorschuiven naar volgende week
+            if ($frequency === 'biweekly') {
+                $carryoverBiweekly[] = $taskName;
+            }
         }
     }
 
@@ -259,6 +308,11 @@ foreach ($indices as $idx) {
         }
     }
 
+    // Sla carry-over biweekly taken op
+    if (!empty($carryoverBiweekly)) {
+        $st['__carryover_biweekly'] = $carryoverBiweekly;
+    }
+    
     $st['__finalized'] = date('Y-m-d H:i:s');
     writeJson($path, $st);
     if ($changedPeople) {
@@ -291,10 +345,12 @@ foreach ($status as $name => $rec) {
     if (strpos($name, '__') === 0) continue; // meta overslaan
     if (($rec['assigned_to'] ?? null) === $personKey) {
         $myTasks[] = [
-            'name'      => $name,
-            'done'      => (bool)($rec['done'] ?? false),
-            'done_at'   => $rec['done_at'] ?? null,
-            'frequency' => $rec['frequency'] ?? 'weekly'
+            'name'        => $name,
+            'done'        => (bool)($rec['done'] ?? false),
+            'done_at'     => $rec['done_at'] ?? null,
+            'frequency'   => $rec['frequency'] ?? 'weekly',
+            'fixed_to'    => $rec['fixed_to'] ?? null,
+            'is_carryover' => (bool)($rec['is_carryover'] ?? false)
         ];
     }
 }
@@ -320,6 +376,8 @@ $totalPot = calculateTotalPot($people);
         .muted{color:var(--muted)}
         .pill{display:inline-block;padding:.25rem .6rem;border-radius:999px;background:#eef2ff;color:#3730a3;font-weight:600}
         .pill-biweekly{background:#fef3c7;color:#92400e}
+        .pill-pinned{background:#fce7f3;color:#831843}
+        .pill-carryover{background:#fee2e2;color:#991b1b}
         .row{max-width:980px;margin:0 auto}
         .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
         .card{background:var(--card);border-radius:12px;box-shadow:var(--shadow);padding:14px}
@@ -380,8 +438,14 @@ $totalPot = calculateTotalPot($people);
                 <div class="card <?= $t['done'] ? 'done' : '' ?>">
                     <h3>
                         <?= htmlspecialchars($t['name']) ?>
+                        <?php if (!empty($t['fixed_to'])): ?>
+                            <span class="pill pill-pinned frequency-badge">📌 Gepind</span>
+                        <?php endif; ?>
                         <?php if (($t['frequency'] ?? 'weekly') === 'biweekly'): ?>
                             <span class="pill pill-biweekly frequency-badge">2-wekelijks</span>
+                        <?php endif; ?>
+                        <?php if (!empty($t['is_carryover'])): ?>
+                            <span class="pill pill-carryover frequency-badge">⏩ Doorgeschoven</span>
                         <?php endif; ?>
                     </h3>
                     <?php if ($t['done']): ?>

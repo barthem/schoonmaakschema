@@ -1,7 +1,7 @@
 {
     "Bart": {
         "name": "Bart",
-        "missed": 1
+        "missed": 5
     },
     "Erin": {
         "name": "Erin",
@@ -9,6 +9,6 @@
     },
     "Mara": {
         "name": "Mara",
-        "missed": 2
+        "missed": 1
     }
 }

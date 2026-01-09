@@ -3,6 +3,7 @@
    - highlight van vandaag
    - weekrotatie (even/oneven ISO-week) voor ma-vr
    - weekend zonder Mara
+   - week navigatie
 */
 
 declare(strict_types=1);
@@ -40,9 +41,19 @@ $weekend = [
   7 => ['Erin', 'Bart'],  // Zo
 ];
 
-$isoWeek  = (int)date('W');       // ISO-weeknummer
-$year     = (int)date('o');       // ISO-jaar (voor week 1 in jan/dec)
-$todayDow = (int)date('N');       // 1=ma ... 7=zo
+// Haal weekoffset uit URL (0 = huidige week, 1 = volgende week, -1 = vorige week)
+$weekOffset = isset($_GET['week']) ? (int)$_GET['week'] : 0;
+
+// Bereken de datum voor de gewenste week
+$targetDate = strtotime("+{$weekOffset} weeks");
+$isoWeek  = (int)date('W', $targetDate);
+$year     = (int)date('o', $targetDate);
+$todayDow = (int)date('N');  // Blijft de huidige dag voor highlighting
+
+// Check of we in de huidige week zitten
+$currentWeek = (int)date('W');
+$currentYear = (int)date('o');
+$isCurrentWeek = ($isoWeek === $currentWeek && $year === $currentYear);
 
 $isEvenWeek = ($isoWeek % 2 === 0);
 $activePattern = $isEvenWeek ? $patternA : $patternB;
@@ -57,6 +68,10 @@ for ($d = 1; $d <= 7; $d++) {
   }
   $schedule[$d] = ['wash' => $wash, 'dry' => $dry];
 }
+
+// Bereken de maandag en zondag van de geselecteerde week voor weergave
+$monday = date('d-m', strtotime("monday this week", $targetDate));
+$sunday = date('d-m-Y', strtotime("sunday this week", $targetDate));
 ?>
 <!DOCTYPE html>
 <html lang="nl">
@@ -80,13 +95,44 @@ for ($d = 1; $d <= 7; $d++) {
     .meta { margin: 0 0 1rem; color: #666; font-size: .95rem; }
     @media (prefers-color-scheme: dark) { .meta { color: #999; } }
 
+    .nav-buttons {
+      display: flex;
+      gap: .6rem;
+      margin-bottom: 1rem;
+      justify-content: flex-end;
+    }
+    .nav-buttons a {
+      padding: .4rem .8rem;
+      background: transparent;
+      color: #3b82f6;
+      text-decoration: none;
+      border: 1px solid #d1d5db;
+      border-radius: .3rem;
+      font-size: .9rem;
+      transition: all .2s;
+    }
+    .nav-buttons a:hover {
+      background: #eff6ff;
+      border-color: #3b82f6;
+    }
+    @media (prefers-color-scheme: dark) {
+      .nav-buttons a {
+        color: #60a5fa;
+        border-color: #374151;
+      }
+      .nav-buttons a:hover {
+        background: #1e3a5f;
+        border-color: #60a5fa;
+      }
+    }
+
     table { border-collapse: collapse; width: 100%; }
     th, td { border: 1px solid #ccc; padding: .6rem .8rem; text-align: left; }
     th { background: #f6f6f6; }
     tbody tr:nth-child(odd) td { background: #fafafa; }
     .weekend td { background: #fff6e5; }
     .today td {
-      outline: 2px solid #3b82f6; /* blauw randje */
+      outline: 2px solid #3b82f6;
       outline-offset: -2px;
       font-weight: 600;
     }
@@ -132,9 +178,19 @@ for ($d = 1; $d <= 7; $d++) {
   <div class="wrap">
     <h1>Afwasrooster (wekelijks herhalend)</h1>
     <p class="meta">
-      Week <?= htmlspecialchars((string)$isoWeek) ?> — <?= htmlspecialchars($days[$todayDow]) ?> <?= date('d-m-Y') ?>
-      — Rotatie: <?= $isEvenWeek ? 'Patroon A (even week)' : 'Patroon B (oneven week)' ?>
+      Week <?= htmlspecialchars((string)$isoWeek) ?> (<?= htmlspecialchars($monday) ?> t/m <?= htmlspecialchars($sunday) ?>)
+      <?php if ($isCurrentWeek): ?>
+        — Vandaag: <?= htmlspecialchars($days[$todayDow]) ?>
+      <?php endif; ?>
+      <br>Rotatie: <?= $isEvenWeek ? 'Patroon A (even week)' : 'Patroon B (oneven week)' ?>
     </p>
+
+    <div class="nav-buttons">
+      <?php if ($weekOffset !== 0): ?>
+        <a href="?">Huidige week</a>
+      <?php endif; ?>
+      <a href="?week=<?= $weekOffset + 1 ?>">Volgende week →</a>
+    </div>
 
     <table aria-describedby="toelichting">
       <thead>
@@ -146,7 +202,7 @@ for ($d = 1; $d <= 7; $d++) {
       </thead>
       <tbody>
       <?php foreach ($schedule as $dow => $task): ?>
-        <tr class="<?= $dow >= 6 ? 'weekend ' : '' ?><?= $dow === $todayDow ? 'today' : '' ?>" <?= $dow === $todayDow ? 'aria-current="row"' : '' ?>>
+        <tr class="<?= $dow >= 6 ? 'weekend ' : '' ?><?= ($dow === $todayDow && $isCurrentWeek) ? 'today' : '' ?>" <?= ($dow === $todayDow && $isCurrentWeek) ? 'aria-current="row"' : '' ?>>
           <td data-label="Dag"><?= htmlspecialchars($days[$dow]) ?></td>
           <td data-label="Afwassen"><?= htmlspecialchars($task['wash']) ?></td>
           <td data-label="Afdrogen"><?= htmlspecialchars($task['dry']) ?></td>
