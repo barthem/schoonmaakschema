@@ -191,7 +191,12 @@ function getCarryoverTasks(int $currentWeek, array $allTasks): array {
 function ensureCurrentWeekStatus(string $path, array $people, array $allTasks, int $week): array {
     // Zorg dat er een statusbestand is voor de huidige week; zo niet, maak het aan met alleen actieve taken.
     $status = readJson($path, []);
-    if (empty($status)) {
+    // Check of er ECHTE taken in zitten (niet alleen meta-keys zoals __finalized)
+    $hasTasks = false;
+    foreach ($status as $key => $val) {
+        if (strpos($key, '__') !== 0) { $hasTasks = true; break; }
+    }
+    if (!$hasTasks) {
         // Filter taken op basis van frequency (weekly vs biweekly)
         $activeTasks = getActiveTasksForWeek($allTasks, $week);
         
@@ -270,6 +275,22 @@ if (!$personKey || !isset($people[$personKey])) {
 $today   = new DateTime('today');
 $wIndex  = weekIndex($startDate, $today);
 $curPath = __DIR__ . "/status_{$wIndex}.json";
+
+/* ========== Backfill gemiste weken: maak statusbestanden aan voor weken die niemand bezocht heeft ========== */
+// Vind de hoogste bestaande weekindex (of -1 als er geen zijn)
+$existingIndices = allStatusIndices();
+$lastKnownWeek = empty($existingIndices) ? -1 : max($existingIndices);
+
+// Maak statusbestanden aan voor alle weken tussen de laatst bekende en de huidige week
+// Safety cap: maximaal 52 weken terugkijken om performance issues te voorkomen
+$backfillStart = max(0, $lastKnownWeek + 1, $wIndex - 52);
+for ($w = $backfillStart; $w < $wIndex; $w++) {
+    $backfillPath = __DIR__ . "/status_{$w}.json";
+    if (!is_file($backfillPath)) {
+        // Maak een statusbestand aan met taken voor die week, zodat finalisatie boetes kan tellen
+        ensureCurrentWeekStatus($backfillPath, $people, $tasks, $w);
+    }
+}
 
 /* ========== Finaliseer ALLE vorige weken die nog open staan (boete 1x p.p. p.week) ========== */
 $indices = allStatusIndices();
