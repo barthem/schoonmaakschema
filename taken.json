@@ -1,6 +1,5 @@
 [
     { "name": "Harry onderhouden + draaien", "fixed_to": "Bart", "frequency": "weekly" },
-    { "name": "beneden dweilen", "fixed_to": null, "frequency": "biweekly" },
     { "name": "Vuilnis Keuken wegbrengen (plastic/vuilnisbak/karton)", "fixed_to": null, "frequency": "weekly" },
     { "name": "Badkamer schoonmaken", "fixed_to": "Mara", "frequency": "weekly" },
     { "name": "Trap naar boven schoonmaken", "fixed_to": "Erin", "frequency": "weekly" },
