@@ -17,11 +17,22 @@ session_start();
 /* ========== Config ========== */
 $peopleFile = __DIR__ . '/mensen.json';
 $tasksFile  = __DIR__ . '/taken.json';
+$statusDir  = __DIR__ . '/status';
+
+// Maak statusmap aan als die nog niet bestaat
+if (!is_dir($statusDir)) {
+    mkdir($statusDir, 0755, true);
+}
 
 // Vaste start (bijv. een vrijdag). Weekindex = floor(days/7) vanaf deze datum.
 $startDate  = new DateTime('2025-09-06'); // <-- pas aan naar jullie echte startdatum. 05-09 is een vrijdag, 06-09 is een zaterdag
 
 /* ========== Helpers ========== */
+function statusPath(int $week): string {
+    global $statusDir;
+    return $statusDir . "/status_{$week}.json";
+}
+
 function readJson(string $path, $fallback) {
     if (!is_file($path)) return $fallback;
     $raw = file_get_contents($path);
@@ -51,6 +62,27 @@ function isTaskActiveInWeek(array $task, int $week): bool {
     
     // Default: weekly
     return true;
+}
+
+/**
+ * Filter subtasks voor een bepaalde week op basis van hun frequency.
+ * Subtasks kunnen strings (legacy) of objecten {name, frequency} zijn.
+ * Bij strings wordt de frequency van de parent-taak overgenomen.
+ */
+function filterSubtasksForWeek(array $subtasks, int $week, string $parentFrequency = 'weekly'): array {
+    $active = [];
+    foreach ($subtasks as $sub) {
+        // Backward compat: als het een string is, maak er een object van
+        if (is_string($sub)) {
+            $sub = ['name' => $sub, 'frequency' => $parentFrequency];
+        }
+        $freq = $sub['frequency'] ?? $parentFrequency;
+        if ($freq === 'biweekly') {
+            if (($week % 2) !== 1) continue; // zelfde logica als hoofdtaken
+        }
+        $active[] = $sub;
+    }
+    return $active;
 }
 
 /**
@@ -109,7 +141,7 @@ function assignedForWeekBalanced(array $people, array $tasks, int $week): array 
             $prevWeek = $week - $lookback;
             if ($prevWeek < 0) break;
             
-            $prevPath = __DIR__ . "/status_{$prevWeek}.json";
+            $prevPath = statusPath($prevWeek);
             $prevStatus = readJson($prevPath, []);
             foreach ($prevStatus as $taskName => $taskData) {
                 if (strpos($taskName, '__') !== 0 && isset($taskData['assigned_to'])) {
@@ -164,7 +196,7 @@ function assignedForWeekBalanced(array $people, array $tasks, int $week): array 
 function getCarryoverTasks(int $currentWeek, array $allTasks): array {
     if ($currentWeek <= 0) return [];
     
-    $prevPath = __DIR__ . "/status_" . ($currentWeek - 1) . ".json";
+    $prevPath = statusPath($currentWeek - 1);
     $prevStatus = readJson($prevPath, []);
     
     $carryoverNames = $prevStatus['__carryover_biweekly'] ?? [];
@@ -218,17 +250,39 @@ function ensureCurrentWeekStatus(string $path, array $people, array $allTasks, i
         $assigned = assignedForWeekBalanced($people, $activeTasks, $week);
         
         // Maak status-entries voor alle actieve taken
+        // Subtasks worden uitgevouwen als losse taken met dezelfde assigned_to
         $status = ['__finalized' => false];
         foreach ($activeTasks as $i => $t) {
-            $name  = $t['name'];
             $owner = $assigned[$i] ?? null;
-            $status[$name] = [
-                'assigned_to' => $owner,
-                'done'        => false,
-                'frequency'   => $t['frequency'] ?? 'weekly',
-                'fixed_to'    => $t['fixed_to'] ?? null,
-                'is_carryover' => $t['is_carryover'] ?? false
-            ];
+            $subtasks = filterSubtasksForWeek($t['subtasks'] ?? [], $week, $t['frequency'] ?? 'weekly');
+            
+            if (!empty($subtasks)) {
+                // Taak met subtaken: elke subtaak wordt een losse entry
+                // Naam wordt "Hoofdtaak - Subtaak" voor context
+                $parentName = $t['name'];
+                foreach ($subtasks as $sub) {
+                    $subName = is_string($sub) ? $sub : ($sub['name'] ?? '');
+                    if ($subName === '') continue;
+                    $subFreq = is_string($sub) ? ($t['frequency'] ?? 'weekly') : ($sub['frequency'] ?? $t['frequency'] ?? 'weekly');
+                    $displayName = $parentName . ' - ' . $subName;
+                    $status[$displayName] = [
+                        'assigned_to'  => $owner,
+                        'done'         => false,
+                        'frequency'    => $subFreq,
+                        'fixed_to'     => $t['fixed_to'] ?? null,
+                        'is_carryover' => $t['is_carryover'] ?? false
+                    ];
+                }
+            } else {
+                // Taak zonder subtaken: gewoon als entry
+                $status[$t['name']] = [
+                    'assigned_to'  => $owner,
+                    'done'         => false,
+                    'frequency'    => $t['frequency'] ?? 'weekly',
+                    'fixed_to'     => $t['fixed_to'] ?? null,
+                    'is_carryover' => $t['is_carryover'] ?? false
+                ];
+            }
         }
         writeJson($path, $status);
     }
@@ -236,7 +290,8 @@ function ensureCurrentWeekStatus(string $path, array $people, array $allTasks, i
 }
 
 function allStatusIndices(): array {
-    $files = glob(__DIR__ . '/status_*.json');
+    global $statusDir;
+    $files = glob($statusDir . '/status_*.json');
     $out = [];
     foreach ($files ?: [] as $f) {
         if (preg_match('~/status_(\d+)\.json$~', $f, $m)) {
@@ -274,7 +329,7 @@ if (!$personKey || !isset($people[$personKey])) {
 /* ========== Week & status ========== */
 $today   = new DateTime('today');
 $wIndex  = weekIndex($startDate, $today);
-$curPath = __DIR__ . "/status_{$wIndex}.json";
+$curPath = statusPath($wIndex);
 
 /* ========== Backfill gemiste weken: maak statusbestanden aan voor weken die niemand bezocht heeft ========== */
 // Vind de hoogste bestaande weekindex (of -1 als er geen zijn)
@@ -285,7 +340,7 @@ $lastKnownWeek = empty($existingIndices) ? -1 : max($existingIndices);
 // Safety cap: maximaal 52 weken terugkijken om performance issues te voorkomen
 $backfillStart = max(0, $lastKnownWeek + 1, $wIndex - 52);
 for ($w = $backfillStart; $w < $wIndex; $w++) {
-    $backfillPath = __DIR__ . "/status_{$w}.json";
+    $backfillPath = statusPath($w);
     if (!is_file($backfillPath)) {
         // Maak een statusbestand aan met taken voor die week, zodat finalisatie boetes kan tellen
         ensureCurrentWeekStatus($backfillPath, $people, $tasks, $w);
@@ -296,7 +351,7 @@ for ($w = $backfillStart; $w < $wIndex; $w++) {
 $indices = allStatusIndices();
 foreach ($indices as $idx) {
     if ($idx >= $wIndex) break; // alleen oudere weken
-    $path = __DIR__ . "/status_{$idx}.json";
+    $path = statusPath($idx);
     $st   = readJson($path, []);
     if (empty($st) || !empty($st['__finalized'])) {
         continue; // niks te doen of al afgerond

@@ -53,17 +53,27 @@ Een eenvoudige PHP-webapp voor het beheren van huishoudelijke taken met automati
        {
            "name": "Badkamer schoonmaken",
            "fixed_to": null,
-           "frequency": "weekly"
+           "frequency": "weekly",
+           "subtasks": []
        },
        {
            "name": "Keuken dweilen",
            "fixed_to": null,
-           "frequency": "biweekly"
+           "frequency": "biweekly",
+           "subtasks": [
+               { "name": "Vloer", "frequency": "biweekly" },
+               { "name": "Aanrecht", "frequency": "weekly" }
+           ]
        },
        {
            "name": "Vuilnis wegbrengen",
            "fixed_to": "Bart",
-           "frequency": "weekly"
+           "frequency": "weekly",
+           "subtasks": [
+               { "name": "Plastic", "frequency": "weekly" },
+               { "name": "Restafval", "frequency": "weekly" },
+               { "name": "Karton", "frequency": "biweekly" }
+           ]
        }
    ]
    ```
@@ -89,8 +99,10 @@ schoonmaakschema/
 ├── afwas.php          # Afwasrooster
 ├── mensen.json        # Configuratie van huisgenoten
 ├── taken.json         # Configuratie van taken
-├── status_0.json      # Week 0 status (wordt automatisch aangemaakt)
-├── status_1.json      # Week 1 status (wordt automatisch aangemaakt)
+├── status/            # Statusbestanden per week (wordt automatisch aangemaakt)
+│   ├── status_0.json
+│   ├── status_1.json
+│   └── ...
 └── README.md          # Deze documentatie
 ```
 
@@ -124,13 +136,31 @@ In `taken.json` kun je taken toevoegen of aanpassen:
 - **name**: Naam van de taak
 - **fixed_to**: Persoon aan wie de taak vast is toegewezen (of `null` voor roulatie)
 - **frequency**: `"weekly"` of `"biweekly"`
+- **subtasks**: Optionele lijst van subtaken (of `[]` als er geen zijn). Subtaken worden uitgevouwen als losse taken die elk individueel afgevinkt moeten worden. Bij de roulatie telt de groep als één taak (voor load balancing), maar elke subtaak verschijnt als eigen kaart. Elke subtaak kan een eigen frequency hebben. Let op: subtaaknamen moeten uniek zijn over alle taken heen.
 
-Voorbeeld:
+Voorbeeld met subtaken (met eigen frequency):
 ```json
 {
     "name": "WC schoonmaken",
     "fixed_to": "Mara",
-    "frequency": "weekly"
+    "frequency": "weekly",
+    "subtasks": [
+        { "name": "WC vloer dweilen", "frequency": "weekly" },
+        { "name": "WC schrobben", "frequency": "weekly" },
+        { "name": "Achter de WC dweilen", "frequency": "biweekly" }
+    ]
+}
+```
+
+Subtaken met `"frequency": "biweekly"` verschijnen alleen in de weken dat ze actief zijn. Als een subtaak geen frequency heeft, erft die de frequency van de hoofdtaak. De hoofdtaak zelf ("WC schoonmaken") verschijnt niet als kaart — alleen de subtaken worden getoond.
+
+Voorbeeld zonder subtaken:
+```json
+{
+    "name": "kattenbak legen/vullen",
+    "fixed_to": "Erin",
+    "frequency": "weekly",
+    "subtasks": []
 }
 ```
 
@@ -191,7 +221,7 @@ if (!in_array($clientIp, $allowedIps, true)) {
 
 ### Boetes worden niet bijgewerkt
 
-- Zorg dat PHP schrijfrechten heeft voor `mensen.json` en `status_*.json` bestanden
+- Zorg dat PHP schrijfrechten heeft voor `mensen.json` en de `status/` map
 - Controleer of de startdatum correct is ingesteld
 
 ### Status bestanden worden niet aangemaakt
