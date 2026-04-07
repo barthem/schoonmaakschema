@@ -53,13 +53,17 @@ function weekIndex(DateTime $start, DateTime $today): int {
  */
 function isTaskActiveInWeek(array $task, int $week): bool {
     $frequency = $task['frequency'] ?? 'weekly';
-    
+
     if ($frequency === 'biweekly') {
-        // Tweewekelijks: alleen in even weken (0,2,4,6...)
-        // Verander naar ($week % 2) === 1 voor oneven weken (1,3,5,7...)
+        // Tweewekelijks: alleen in oneven weken (1,3,5,7...)
         return ($week % 2) === 1;
     }
-    
+
+    if ($frequency === 'monthly') {
+        // Maandelijks: elke 4 weken (week 0, 4, 8, 12...)
+        return ($week % 4) === 0;
+    }
+
     // Default: weekly
     return true;
 }
@@ -78,7 +82,10 @@ function filterSubtasksForWeek(array $subtasks, int $week, string $parentFrequen
         }
         $freq = $sub['frequency'] ?? $parentFrequency;
         if ($freq === 'biweekly') {
-            if (($week % 2) !== 1) continue; // zelfde logica als hoofdtaken
+            if (($week % 2) !== 1) continue;
+        }
+        if ($freq === 'monthly') {
+            if (($week % 4) !== 0) continue;
         }
         $active[] = $sub;
     }
@@ -369,8 +376,8 @@ foreach ($indices as $idx) {
         if ($assignedTo && !$done) {
             $weekMissed[$assignedTo] = true;
             
-            // Biweekly taken die niet af zijn: doorschuiven naar volgende week
-            if ($frequency === 'biweekly') {
+            // Biweekly/monthly taken die niet af zijn: doorschuiven naar volgende week
+            if ($frequency === 'biweekly' || $frequency === 'monthly') {
                 $carryoverBiweekly[] = $taskName;
             }
         }
@@ -452,6 +459,7 @@ $totalPot = calculateTotalPot($people);
         .muted{color:var(--muted)}
         .pill{display:inline-block;padding:.25rem .6rem;border-radius:999px;background:#eef2ff;color:#3730a3;font-weight:600}
         .pill-biweekly{background:#fef3c7;color:#92400e}
+        .pill-monthly{background:#dbeafe;color:#1e40af}
         .pill-pinned{background:#fce7f3;color:#831843}
         .pill-carryover{background:#fee2e2;color:#991b1b}
         .row{max-width:980px;margin:0 auto}
@@ -519,6 +527,9 @@ $totalPot = calculateTotalPot($people);
                         <?php endif; ?>
                         <?php if (($t['frequency'] ?? 'weekly') === 'biweekly'): ?>
                             <span class="pill pill-biweekly frequency-badge">2-wekelijks</span>
+                        <?php endif; ?>
+                        <?php if (($t['frequency'] ?? 'weekly') === 'monthly'): ?>
+                            <span class="pill pill-monthly frequency-badge">Maandelijks</span>
                         <?php endif; ?>
                         <?php if (!empty($t['is_carryover'])): ?>
                             <span class="pill pill-carryover frequency-badge">⏩ Doorgeschoven</span>

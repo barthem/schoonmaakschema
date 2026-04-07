@@ -31,5 +31,13 @@
     { "name": "Trap naar beneden/halletje schoonmaken", "fixed_to": null, "frequency": "weekly", "subtasks": [] },
     { "name": "woonkamer stoffen/stofzuigen", "fixed_to": null, "frequency": "weekly", "subtasks": [] },
     { "name": "witte trapleuning naar boven afnemen", "fixed_to": null, "frequency": "biweekly", "subtasks": [] },
-    { "name": "Glas wegbrengen naar glasbak", "fixed_to": null, "frequency": "biweekly", "subtasks": [] }
+    { "name": "Glas wegbrengen naar glasbak", "fixed_to": null, "frequency": "biweekly", "subtasks": [] },
+    { "name": "keukendoek vervangen", "fixed_to": null, "frequency": "weekly", "subtasks": [
+            { "name": "vaatdoekje", "frequency": "weekly" },
+            { "name": "thee/handdoek", "frequency": "weekly" }
+
+    ] },
+    { "name": "waterbak filter vervangen/ontslimen", "fixed_to": null, "frequency": "montly", "subtasks": [] }
+
+
 ]
