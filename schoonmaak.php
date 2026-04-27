@@ -112,48 +112,70 @@ function calculateTotalPot(array $people): int {
 }
 
 /**
+ * Normaliseer fixed_to naar een array van geldige personen.
+ * - null/leeg/"" → []  (geen restrictie, iedereen mag)
+ * - "Bart"       → ["Bart"]  (gepind aan 1 persoon)
+ * - ["Bart","Erin"] → gefilterd op geldige personen
+ */
+function normalizeFixedTo($fixedTo, array $people): array {
+    if (is_array($fixedTo)) {
+        return array_values(array_filter($fixedTo, fn($p) => is_string($p) && $p !== '' && isset($people[$p])));
+    }
+    if (is_string($fixedTo) && $fixedTo !== '' && isset($people[$fixedTo])) {
+        return [$fixedTo];
+    }
+    return [];
+}
+
+/**
  * Gebalanceerde roulatie met taak-variatie:
- * - Vaste taken eerst → verhogen 'load' van die persoon.
- * - Niet-vaste taken: voorkom dat iemand dezelfde taak meerdere weken achter elkaar krijgt.
- * - Load balancing + taak-geschiedenis voor eerlijke verdeling.
- * 
+ * - Single-fixed (1 persoon) eerst — geen keuze, telt direct mee in load.
+ * - Multi-fixed (array van 2+) — kies uit die kandidaten met load-balancing + history tie-break.
+ * - Niet-vaste taken — kies uit alle personen met load-balancing + history tie-break.
+ *
  * LET OP: Deze functie krijgt al gefilterde taken (alleen actieve taken voor deze week)
  */
 function assignedForWeekBalanced(array $people, array $tasks, int $week): array {
     $personKeys = array_keys($people);
     $n = max(1, count($personKeys));
 
-    // 1) Loads init
     $load = array_fill_keys($personKeys, 0);
     $assigned = [];
+    $singleFixedIdx = [];
+    $multiFixedIdx = [];   // taken gepind tussen 2+ personen
     $unfixedIdx = [];
 
-    // 2) Vaste taken plaatsen + loads tellen
+    // Indeel taken op basis van fixed_to
     foreach ($tasks as $i => $t) {
-        if (!empty($t['fixed_to'])) {
-            $p = $t['fixed_to'];
-            $assigned[$i] = $p;
-            if (isset($load[$p])) $load[$p]++;
+        $cands = normalizeFixedTo($t['fixed_to'] ?? null, $people);
+        if (count($cands) === 1) {
+            $singleFixedIdx[] = $i;
+        } elseif (count($cands) >= 2) {
+            $multiFixedIdx[] = $i;
         } else {
             $unfixedIdx[] = $i;
         }
     }
 
-    // 3) Geschiedenis van vorige week(en) ophalen voor taak-variatie
-    // Voor biweekly taken kijken we 2 weken terug, voor weekly 1 week
+    // 1) Single-fixed direct toewijzen + load tellen
+    foreach ($singleFixedIdx as $i) {
+        $cands = normalizeFixedTo($tasks[$i]['fixed_to'], $people);
+        $p = $cands[0];
+        $assigned[$i] = $p;
+        $load[$p]++;
+    }
+
+    // 2) Geschiedenis van vorige week(en) voor taak-variatie
     $previousWeekHistory = [];
     if ($week > 0) {
-        // Kijk maximaal 2 weken terug voor taak-variatie
         for ($lookback = 1; $lookback <= 2; $lookback++) {
             $prevWeek = $week - $lookback;
             if ($prevWeek < 0) break;
-            
+
             $prevPath = statusPath($prevWeek);
             $prevStatus = readJson($prevPath, []);
             foreach ($prevStatus as $taskName => $taskData) {
                 if (strpos($taskName, '__') !== 0 && isset($taskData['assigned_to'])) {
-                    // Bewaar alleen als we deze taak nog niet hebben gezien
-                    // (meest recente toewijzing heeft voorrang)
                     if (!isset($previousWeekHistory[$taskName])) {
                         $previousWeekHistory[$taskName] = $taskData['assigned_to'];
                     }
@@ -162,7 +184,7 @@ function assignedForWeekBalanced(array $people, array $tasks, int $week): array 
         }
     }
 
-    // 4) Week-rotatie voor tie-breaks (deterministisch per week)
+    // 3) Week-rotatie voor tie-breaks (deterministisch per week)
     $rot = [];
     for ($k = 0; $k < $n; $k++) {
         $rot[] = $personKeys[($week + $k) % $n];
@@ -170,25 +192,30 @@ function assignedForWeekBalanced(array $people, array $tasks, int $week): array 
     $rank = [];
     foreach ($rot as $pos => $pk) $rank[$pk] = $pos;
 
-    // 5) Niet-vaste taken verdelen met taak-variatie
+    // Helper: kies kandidaat uit een set met laagste load + history-aware tie-break
+    $pickCandidate = function(array $candidates, ?string $lastAssignedTo) use (&$load, $rank): string {
+        $loadsForCands = array_intersect_key($load, array_flip($candidates));
+        $minLoad = min($loadsForCands);
+        $minCands = array_keys(array_filter($loadsForCands, fn($v) => $v === $minLoad));
+        $preferred = array_values(array_filter($minCands, fn($p) => $p !== $lastAssignedTo));
+        $finalCands = !empty($preferred) ? $preferred : $minCands;
+        usort($finalCands, fn($a, $b) => $rank[$a] <=> $rank[$b]);
+        return $finalCands[0];
+    };
+
+    // 4) Multi-fixed: kies uit beperkte kandidatenset
+    foreach ($multiFixedIdx as $i) {
+        $taskName = $tasks[$i]['name'];
+        $cands = normalizeFixedTo($tasks[$i]['fixed_to'], $people);
+        $chosen = $pickCandidate($cands, $previousWeekHistory[$taskName] ?? null);
+        $assigned[$i] = $chosen;
+        $load[$chosen]++;
+    }
+
+    // 5) Niet-vaste taken: alle personen als kandidaat
     foreach ($unfixedIdx as $i) {
         $taskName = $tasks[$i]['name'];
-        $lastAssignedTo = $previousWeekHistory[$taskName] ?? null;
-        
-        // Candidates: personen met laagste load
-        $minLoad = min($load);
-        $candidates = array_keys(array_filter($load, fn($v) => $v === $minLoad, ARRAY_FILTER_USE_BOTH));
-        
-        // Als mogelijk, vermijd persoon die deze taak vorige keer deed
-        $preferred = array_filter($candidates, fn($p) => $p !== $lastAssignedTo);
-        
-        // Als er nog kandidaten over zijn na filtering, gebruik die. Anders alle kandidaten.
-        $finalCandidates = !empty($preferred) ? $preferred : $candidates;
-        
-        // Sorteer op week-rotatie voor deterministische keuze
-        usort($finalCandidates, fn($a, $b) => $rank[$a] <=> $rank[$b]);
-        
-        $chosen = $finalCandidates[0];
+        $chosen = $pickCandidate($personKeys, $previousWeekHistory[$taskName] ?? null);
         $assigned[$i] = $chosen;
         $load[$chosen]++;
     }
@@ -438,6 +465,36 @@ foreach ($status as $name => $rec) {
     }
 }
 
+/* ========== Vorige week (alle taken + wie afvinkte) ========== */
+$showPrevious = isset($_GET['view']) && $_GET['view'] === 'vorige';
+$prevWeekIndex = $wIndex - 1;
+$prevTasks = [];
+$prevHasData = false;
+if ($showPrevious && $prevWeekIndex >= 0) {
+    $prevPath = statusPath($prevWeekIndex);
+    if (is_file($prevPath)) {
+        $prevHasData = true;
+        $prevStatusRaw = readJson($prevPath, []);
+        foreach ($prevStatusRaw as $name => $rec) {
+            if (strpos($name, '__') === 0) continue;
+            $prevTasks[] = [
+                'name'        => $name,
+                'assigned_to' => $rec['assigned_to'] ?? null,
+                'done'        => (bool)($rec['done'] ?? false),
+                'done_by'     => $rec['done_by'] ?? null,
+                'done_at'     => $rec['done_at'] ?? null,
+                'frequency'   => $rec['frequency'] ?? 'weekly',
+                'fixed_to'    => $rec['fixed_to'] ?? null,
+            ];
+        }
+        // Sorteer op persoon zodat overzicht groepeert
+        usort($prevTasks, function($a, $b) {
+            return strcmp((string)($a['assigned_to'] ?? ''), (string)($b['assigned_to'] ?? ''))
+                ?: strcmp($a['name'], $b['name']);
+        });
+    }
+}
+
 // Bereken totalen
 $meName = htmlspecialchars($people[$personKey]['name']);
 $missed = (int)($people[$personKey]['missed'] ?? 0);
@@ -481,74 +538,128 @@ $totalPot = calculateTotalPot($people);
     </style>
 </head>
 <body>
-<header>
-    <div>
-        <h1><?= $meName ?> · jouw taken</h1>
-        <div class="muted">Weekindex: <span class="pill"><?= (int)$wIndex ?></span> · Start: <?= $startDate->format('Y-m-d') ?></div>
-    </div>
-    <div class="bar">
-        <form method="post">
-            <input type="hidden" name="action" value="logout">
-            <button type="submit" class="btn btn-secondary">Wissel persoon</button>
-        </form>
-        <a href="index.php" class="btn btn-secondary">Menu</a>
-    </div>
-</header>
-
-<div class="row">
-    <div class="pot-cards">
-        <div class="card">
-            <div><strong>Jouw pot-stand</strong></div>
-            <div class="muted">Gemiste weken: <?= $missed ?></div>
-            <div class="money">€<?= $myPot ?></div>
+<?php if ($showPrevious): ?>
+    <header>
+        <div>
+            <h1>Vorige week · week <?= (int)$prevWeekIndex ?></h1>
+            <div class="muted">Wat was er en wie heeft het afgevinkt?</div>
         </div>
-        <div class="card" style="background:linear-gradient(135deg, #fee2e2, #fef2f2);">
-            <div><strong>🏆 Totale pot</strong></div>
-            <div class="muted">Alle huisgenoten samen</div>
-            <div class="money money-big">€<?= $totalPot ?></div>
+        <div class="bar">
+            <a href="schoonmaak.php" class="btn btn-secondary">← Terug naar deze week</a>
+            <a href="index.php" class="btn btn-secondary">Menu</a>
         </div>
-    </div>
-</div>
+    </header>
 
-<div class="row">
-    <div class="grid">
-        <?php if (empty($myTasks)): ?>
+    <div class="row">
+        <?php if (!$prevHasData): ?>
             <div class="card">
-                <h3>Geen taken voor jou deze week</h3>
-                <p class="muted">Lekker bezig — of je staat volgende week weer op de lijst.</p>
+                <h3>Geen data voor vorige week</h3>
+                <p class="muted">Er bestaat nog geen statusbestand voor week <?= (int)$prevWeekIndex ?>.</p>
             </div>
         <?php else: ?>
-            <?php foreach ($myTasks as $t): ?>
-                <div class="card <?= $t['done'] ? 'done' : '' ?>">
-                    <h3>
-                        <?= htmlspecialchars($t['name']) ?>
-                        <?php if (!empty($t['fixed_to'])): ?>
-                            <span class="pill pill-pinned frequency-badge">📌 Gepind</span>
+            <div class="grid">
+                <?php foreach ($prevTasks as $t):
+                    $assignedName = $t['assigned_to'] && isset($people[$t['assigned_to']]) ? $people[$t['assigned_to']]['name'] : ($t['assigned_to'] ?? '—');
+                    $doneByName   = $t['done_by'] && isset($people[$t['done_by']]) ? $people[$t['done_by']]['name'] : $t['done_by'];
+                ?>
+                    <div class="card <?= $t['done'] ? 'done' : '' ?>">
+                        <h3>
+                            <?= htmlspecialchars($t['name']) ?>
+                            <?php if (!empty($t['fixed_to'])): ?>
+                                <span class="pill pill-pinned frequency-badge">📌 Gepind</span>
+                            <?php endif; ?>
+                            <?php if (($t['frequency'] ?? 'weekly') === 'biweekly'): ?>
+                                <span class="pill pill-biweekly frequency-badge">2-wekelijks</span>
+                            <?php endif; ?>
+                            <?php if (($t['frequency'] ?? 'weekly') === 'monthly'): ?>
+                                <span class="pill pill-monthly frequency-badge">Maandelijks</span>
+                            <?php endif; ?>
+                        </h3>
+                        <div class="muted">Toegewezen aan: <strong><?= htmlspecialchars($assignedName) ?></strong></div>
+                        <?php if ($t['done']): ?>
+                            <div style="margin-top:6px">
+                                ✅ Afgevinkt door <strong><?= htmlspecialchars($doneByName ?? $assignedName) ?></strong>
+                                <?= $t['done_at'] ? ' op <strong>'.htmlspecialchars($t['done_at']).'</strong>' : '' ?>
+                            </div>
+                        <?php else: ?>
+                            <div style="margin-top:6px;color:#dc2626;font-weight:600">❌ Niet afgevinkt</div>
                         <?php endif; ?>
-                        <?php if (($t['frequency'] ?? 'weekly') === 'biweekly'): ?>
-                            <span class="pill pill-biweekly frequency-badge">2-wekelijks</span>
-                        <?php endif; ?>
-                        <?php if (($t['frequency'] ?? 'weekly') === 'monthly'): ?>
-                            <span class="pill pill-monthly frequency-badge">Maandelijks</span>
-                        <?php endif; ?>
-                        <?php if (!empty($t['is_carryover'])): ?>
-                            <span class="pill pill-carryover frequency-badge">⏩ Doorgeschoven</span>
-                        <?php endif; ?>
-                    </h3>
-                    <?php if ($t['done']): ?>
-                        <div>✅ Afgevinkt<?= $t['done_at'] ? ' op <strong>'.htmlspecialchars($t['done_at']).'</strong>' : '' ?></div>
-                    <?php else: ?>
-                        <form method="post" class="actions">
-                            <input type="hidden" name="action" value="done">
-                            <input type="hidden" name="task"   value="<?= htmlspecialchars($t['name']) ?>">
-                            <button type="submit">Afvinken</button>
-                        </form>
-                    <?php endif; ?>
-                </div>
-            <?php endforeach; ?>
+                    </div>
+                <?php endforeach; ?>
+            </div>
         <?php endif; ?>
     </div>
-</div>
+<?php else: ?>
+    <header>
+        <div>
+            <h1><?= $meName ?> · jouw taken</h1>
+            <div class="muted">Weekindex: <span class="pill"><?= (int)$wIndex ?></span> · Start: <?= $startDate->format('Y-m-d') ?></div>
+        </div>
+        <div class="bar">
+            <a href="schoonmaak.php?view=vorige" class="btn btn-secondary">📅 Vorige week</a>
+            <form method="post">
+                <input type="hidden" name="action" value="logout">
+                <button type="submit" class="btn btn-secondary">Wissel persoon</button>
+            </form>
+            <a href="index.php" class="btn btn-secondary">Menu</a>
+        </div>
+    </header>
+
+    <div class="row">
+        <div class="pot-cards">
+            <div class="card">
+                <div><strong>Jouw pot-stand</strong></div>
+                <div class="muted">Gemiste weken: <?= $missed ?></div>
+                <div class="money">€<?= $myPot ?></div>
+            </div>
+            <div class="card" style="background:linear-gradient(135deg, #fee2e2, #fef2f2);">
+                <div><strong>🏆 Totale pot</strong></div>
+                <div class="muted">Alle huisgenoten samen</div>
+                <div class="money money-big">€<?= $totalPot ?></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="grid">
+            <?php if (empty($myTasks)): ?>
+                <div class="card">
+                    <h3>Geen taken voor jou deze week</h3>
+                    <p class="muted">Lekker bezig — of je staat volgende week weer op de lijst.</p>
+                </div>
+            <?php else: ?>
+                <?php foreach ($myTasks as $t): ?>
+                    <div class="card <?= $t['done'] ? 'done' : '' ?>">
+                        <h3>
+                            <?= htmlspecialchars($t['name']) ?>
+                            <?php if (!empty($t['fixed_to'])): ?>
+                                <span class="pill pill-pinned frequency-badge">📌 Gepind</span>
+                            <?php endif; ?>
+                            <?php if (($t['frequency'] ?? 'weekly') === 'biweekly'): ?>
+                                <span class="pill pill-biweekly frequency-badge">2-wekelijks</span>
+                            <?php endif; ?>
+                            <?php if (($t['frequency'] ?? 'weekly') === 'monthly'): ?>
+                                <span class="pill pill-monthly frequency-badge">Maandelijks</span>
+                            <?php endif; ?>
+                            <?php if (!empty($t['is_carryover'])): ?>
+                                <span class="pill pill-carryover frequency-badge">⏩ Doorgeschoven</span>
+                            <?php endif; ?>
+                        </h3>
+                        <?php if ($t['done']): ?>
+                            <div>✅ Afgevinkt<?= $t['done_at'] ? ' op <strong>'.htmlspecialchars($t['done_at']).'</strong>' : '' ?></div>
+                        <?php else: ?>
+                            <form method="post" class="actions">
+                                <input type="hidden" name="action" value="done">
+                                <input type="hidden" name="task"   value="<?= htmlspecialchars($t['name']) ?>">
+                                <button type="submit">Afvinken</button>
+                            </form>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </div>
+    </div>
+<?php endif; ?>
 
 </body>
 </html>

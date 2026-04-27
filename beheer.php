@@ -5,7 +5,7 @@
 declare(strict_types=1);
 session_start();
 
-const PASSCODE = 'loveu3';
+const PASSCODE = 'buurman';
 
 $tasksFile = __DIR__ . '/taken.json';
 $peopleFile = __DIR__ . '/mensen.json';
@@ -25,6 +25,51 @@ $people = readJson($peopleFile, []);
 $personKeys = array_keys($people);
 $frequencies = ['weekly' => 'Wekelijks', 'biweekly' => '2-wekelijks', 'monthly' => 'Maandelijks'];
 $lastEdited = is_file($tasksFile) ? filemtime($tasksFile) : null;
+
+// Helper: fixed_to → array van persoon-keys (lege array = niemand/roulatie)
+function fixedToList($fixedTo, array $people): array {
+    if (is_array($fixedTo)) {
+        return array_values(array_filter($fixedTo, fn($p) => is_string($p) && $p !== '' && isset($people[$p])));
+    }
+    if (is_string($fixedTo) && $fixedTo !== '' && isset($people[$fixedTo])) {
+        return [$fixedTo];
+    }
+    return [];
+}
+
+// Huidige week-status laden (zelfde startdatum als schoonmaak.php) zodat we kunnen
+// tonen wie multi-pinned taken deze week heeft gekregen.
+$startDate = new DateTime('2025-09-06');
+$today     = new DateTime('today');
+$wIndex    = intdiv(max(0, (int)$startDate->diff($today)->days), 7);
+$currentWeekStatus = readJson(__DIR__ . "/status/status_{$wIndex}.json", []);
+
+// Frequentie-rangorde: lager getal = vaker. weekly=0, biweekly=1, monthly=2
+function frequencyRank(string $freq): int {
+    return ['weekly' => 0, 'biweekly' => 1, 'monthly' => 2][$freq] ?? 0;
+}
+// Subtaak wordt "afgeschermd" door parent als de subtaak vaker zou willen draaien
+// dan de parent — de parent skipt dan in die weken de hele taak inclusief subtaak.
+function subtaskShadowed(string $subFreq, string $parentFreq): bool {
+    return frequencyRank($subFreq) < frequencyRank($parentFreq);
+}
+
+// Vind de assigned_to van een taak in de huidige week
+// (taken zonder subtaken: directe key; met subtaken: key begint met "Naam - ")
+function currentAssigneeForTask(array $task, array $weekStatus): ?string {
+    $name = $task['name'];
+    if (empty($task['subtasks'])) {
+        return $weekStatus[$name]['assigned_to'] ?? null;
+    }
+    $prefix = $name . ' - ';
+    foreach ($weekStatus as $key => $rec) {
+        if (strpos($key, '__') === 0) continue;
+        if (strpos($key, $prefix) === 0) {
+            return $rec['assigned_to'] ?? null;
+        }
+    }
+    return null;
+}
 
 /* ========== Passcode check ========== */
 $authenticated = ($_SESSION['beheer_auth'] ?? false) === true;
@@ -61,11 +106,25 @@ if ($authenticated && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    // Helper: parse fixed_to uit POST → null (niemand) | string (1 persoon) | array (2+ personen)
+    $parseFixedTo = function() use ($people) {
+        $raw = $_POST['fixed_to'] ?? null;
+        if (is_array($raw)) {
+            $valid = array_values(array_filter($raw, fn($p) => is_string($p) && $p !== '' && isset($people[$p])));
+            if (count($valid) === 0) return null;
+            if (count($valid) === 1) return $valid[0];
+            return $valid;
+        }
+        // Backward compat met oude single-select forms
+        if (is_string($raw) && $raw !== '' && isset($people[$raw])) return $raw;
+        return null;
+    };
+
     // Taak toevoegen
     if ($action === 'add') {
         $name = trim($_POST['name'] ?? '');
         if ($name !== '') {
-            $fixedTo = ($_POST['fixed_to'] ?? '') !== '' ? $_POST['fixed_to'] : null;
+            $fixedTo = $parseFixedTo();
             $freq = $_POST['frequency'] ?? 'weekly';
             if (!isset($frequencies[$freq])) $freq = 'weekly';
 
@@ -87,7 +146,7 @@ if ($authenticated && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if (isset($tasks[$idx])) {
             $name = trim($_POST['name'] ?? '');
             if ($name !== '') {
-                $fixedTo = ($_POST['fixed_to'] ?? '') !== '' ? $_POST['fixed_to'] : null;
+                $fixedTo = $parseFixedTo();
                 $freq = $_POST['frequency'] ?? 'weekly';
                 if (!isset($frequencies[$freq])) $freq = 'weekly';
 
@@ -213,6 +272,9 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
         .pill-biweekly{background:#fef3c7;color:#92400e}
         .pill-monthly{background:#dbeafe;color:#1e40af}
         .pill-pinned{background:#fce7f3;color:#831843}
+        .pill-warn{background:#fef3c7;color:#92400e;border:1px solid #fcd34d}
+        .warn-box{background:#fffbeb;border:1px solid #fcd34d;color:#78350f;padding:8px 12px;border-radius:8px;margin-top:8px;font-size:.85rem;line-height:1.4}
+        .subtask-row-warn{background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:6px;margin:0 -2px 6px}
         .flash{background:#dcfce7;color:#166534;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-weight:600}
         .error{background:#fee2e2;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-weight:600}
         .muted{color:var(--muted);font-size:.9rem}
@@ -220,6 +282,12 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
         .subtask-row{display:flex;gap:8px;align-items:center;margin-bottom:6px}
         .subtask-row input[type=text]{flex:1}
         .subtask-row select{width:auto;flex:0 0 140px}
+
+        .pin-checkboxes{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+        .pin-check{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid #d1d5db;border-radius:8px;cursor:pointer;font-weight:500;font-size:.9rem;background:#f9fafb;user-select:none;margin:0}
+        .pin-check:hover{background:#eef2ff;border-color:#a5b4fc}
+        .pin-check input[type=checkbox]{margin:0;cursor:pointer}
+        .pin-check:has(input:checked){background:#fce7f3;border-color:#ec4899;color:#831843;font-weight:700}
 
         .login-box{max-width:360px;margin:60px auto}
         .login-box h1{text-align:center}
@@ -265,13 +333,17 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
             <label for="name">Naam</label>
             <input type="text" id="name" name="name" value="<?= htmlspecialchars($t['name']) ?>" required />
 
-            <label for="fixed_to">Gepind aan</label>
-            <select id="fixed_to" name="fixed_to">
-                <option value="">— Niemand (roulatie)</option>
+            <label>Gepind aan</label>
+            <?php $currentFixed = fixedToList($t['fixed_to'] ?? null, $people); ?>
+            <div class="pin-checkboxes">
                 <?php foreach ($personKeys as $pk): ?>
-                    <option value="<?= htmlspecialchars($pk) ?>" <?= ($t['fixed_to'] ?? '') === $pk ? 'selected' : '' ?>><?= htmlspecialchars($people[$pk]['name']) ?></option>
+                    <label class="pin-check">
+                        <input type="checkbox" name="fixed_to[]" value="<?= htmlspecialchars($pk) ?>" <?= in_array($pk, $currentFixed, true) ? 'checked' : '' ?> />
+                        <?= htmlspecialchars($people[$pk]['name']) ?>
+                    </label>
                 <?php endforeach; ?>
-            </select>
+            </div>
+            <div class="muted" style="font-size:.85rem;margin-top:4px">Geen vinkje = roulatie tussen iedereen. 1 vinkje = vast aan die persoon. 2+ vinkjes = roulatie tussen die personen.</div>
 
             <label for="frequency">Frequentie</label>
             <select id="frequency" name="frequency">
@@ -281,19 +353,38 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
             </select>
 
             <h2>Subtaken</h2>
+            <?php
+                $parentFreq = $t['frequency'] ?? 'weekly';
+                $editHasShadowed = false;
+                foreach ($t['subtasks'] ?? [] as $sub) {
+                    $sf = is_string($sub) ? $parentFreq : ($sub['frequency'] ?? $parentFreq);
+                    if (subtaskShadowed($sf, $parentFreq)) { $editHasShadowed = true; break; }
+                }
+            ?>
+            <?php if ($editHasShadowed): ?>
+                <div class="warn-box">
+                    ⚠ Eén of meer subtaken hebben een hogere frequentie dan de parent ("<?= htmlspecialchars($frequencies[$parentFreq] ?? $parentFreq) ?>").
+                    De parent bepaalt wanneer de hele taak verschijnt — die subtaken draaien dus niet vaker dan de parent.
+                    Zet de parent op "Wekelijks" als je wilt dat subtaken hun eigen schema volgen.
+                </div>
+            <?php endif; ?>
             <div id="subtasks-container">
                 <?php foreach ($t['subtasks'] ?? [] as $si => $sub): ?>
                     <?php
                         $subName = is_string($sub) ? $sub : ($sub['name'] ?? '');
-                        $subFreq = is_string($sub) ? ($t['frequency'] ?? 'weekly') : ($sub['frequency'] ?? $t['frequency'] ?? 'weekly');
+                        $subFreq = is_string($sub) ? $parentFreq : ($sub['frequency'] ?? $parentFreq);
+                        $rowShadowed = subtaskShadowed($subFreq, $parentFreq);
                     ?>
-                    <div class="subtask-row">
+                    <div class="subtask-row<?= $rowShadowed ? ' subtask-row-warn' : '' ?>">
                         <input type="text" name="sub_name[]" value="<?= htmlspecialchars($subName) ?>" placeholder="Subtaaknaam" />
                         <select name="sub_freq[]">
                             <?php foreach ($frequencies as $fk => $fl): ?>
                                 <option value="<?= $fk ?>" <?= $subFreq === $fk ? 'selected' : '' ?>><?= $fl ?></option>
                             <?php endforeach; ?>
                         </select>
+                        <?php if ($rowShadowed): ?>
+                            <span title="Parent staat op '<?= htmlspecialchars($frequencies[$parentFreq] ?? $parentFreq) ?>', dus deze subtaak draait ook maar zo vaak." style="color:#92400e;font-weight:700">⚠</span>
+                        <?php endif; ?>
                         <button type="button" class="btn btn-danger btn-sm" onclick="this.parentElement.remove()">X</button>
                     </div>
                 <?php endforeach; ?>
@@ -353,7 +444,7 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
         <h2 style="margin-top:0">Nieuwe taak</h2>
         <form method="post">
             <input type="hidden" name="action" value="add" />
-            <div style="display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:end">
+            <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end">
                 <div>
                     <label for="new_name">Naam</label>
                     <input type="text" id="new_name" name="name" placeholder="Taaknaam" required />
@@ -366,16 +457,17 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <div>
-                    <label for="new_fixed">Gepind</label>
-                    <select id="new_fixed" name="fixed_to">
-                        <option value="">—</option>
-                        <?php foreach ($personKeys as $pk): ?>
-                            <option value="<?= htmlspecialchars($pk) ?>"><?= htmlspecialchars($people[$pk]['name']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
             </div>
+            <label style="margin-top:10px">Gepind aan</label>
+            <div class="pin-checkboxes">
+                <?php foreach ($personKeys as $pk): ?>
+                    <label class="pin-check">
+                        <input type="checkbox" name="fixed_to[]" value="<?= htmlspecialchars($pk) ?>" />
+                        <?= htmlspecialchars($people[$pk]['name']) ?>
+                    </label>
+                <?php endforeach; ?>
+            </div>
+            <div class="muted" style="font-size:.85rem;margin-top:4px">Geen vinkje = roulatie. 1 = vast. 2+ = roulatie tussen die personen.</div>
             <br>
             <button type="submit" class="btn btn-primary">Toevoegen</button>
             <span class="muted" style="margin-left:8px">Subtaken kun je toevoegen na het aanmaken.</span>
@@ -391,21 +483,48 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
                     <h3>
                         <?= htmlspecialchars($t['name']) ?>
                         <span class="pill pill-<?= htmlspecialchars($t['frequency'] ?? 'weekly') ?>"><?= $frequencies[$t['frequency'] ?? 'weekly'] ?? 'Wekelijks' ?></span>
-                        <?php if (!empty($t['fixed_to'])): ?>
-                            <span class="pill pill-pinned"><?= htmlspecialchars($people[$t['fixed_to']]['name'] ?? $t['fixed_to']) ?></span>
+                        <?php
+                            $pinned = fixedToList($t['fixed_to'] ?? null, $people);
+                            $assigneeKey = null;
+                            if (count($pinned) === 1) {
+                                $assigneeKey = $pinned[0];
+                            } elseif (count($pinned) >= 2) {
+                                // Multi-pin: pak wie deze week is gekozen, anders eerste uit de pool
+                                $current = currentAssigneeForTask($t, $currentWeekStatus);
+                                $assigneeKey = ($current && in_array($current, $pinned, true)) ? $current : $pinned[0];
+                            }
+                        ?>
+                        <?php if ($assigneeKey !== null): ?>
+                            <span class="pill pill-pinned">📌 <?= htmlspecialchars($people[$assigneeKey]['name'] ?? $assigneeKey) ?><?php if (count($pinned) >= 2): ?> <small style="opacity:.7">(rouleert)</small><?php endif; ?></span>
                         <?php endif; ?>
                     </h3>
-                    <?php if (!empty($t['subtasks'])): ?>
+                    <?php if (!empty($t['subtasks'])):
+                        $parentFreq = $t['frequency'] ?? 'weekly';
+                        $hasShadowed = false;
+                    ?>
                         <div class="muted" style="margin-top:4px">
                             <?php foreach ($t['subtasks'] as $si => $sub):
                                 $sName = is_string($sub) ? $sub : ($sub['name'] ?? '');
-                                $sFreq = is_string($sub) ? ($t['frequency'] ?? 'weekly') : ($sub['frequency'] ?? $t['frequency'] ?? 'weekly');
-                                $parentFreq = $t['frequency'] ?? 'weekly';
+                                $sFreq = is_string($sub) ? $parentFreq : ($sub['frequency'] ?? $parentFreq);
+                                $shadowed = subtaskShadowed($sFreq, $parentFreq);
+                                if ($shadowed) $hasShadowed = true;
                             ?>
                                 <?php if ($si > 0): ?><span style="color:#d1d5db"> · </span><?php endif; ?>
-                                <?= htmlspecialchars($sName) ?><?php if ($sFreq !== $parentFreq): ?> <span class="pill pill-<?= htmlspecialchars($sFreq) ?>" style="font-size:.7rem;padding:.1rem .4rem"><?= $frequencies[$sFreq] ?? $sFreq ?></span><?php endif; ?>
+                                <?= htmlspecialchars($sName) ?>
+                                <?php if ($sFreq !== $parentFreq): ?>
+                                    <span class="pill pill-<?= htmlspecialchars($sFreq) ?>" style="font-size:.7rem;padding:.1rem .4rem"><?= $frequencies[$sFreq] ?? $sFreq ?></span>
+                                <?php endif; ?>
+                                <?php if ($shadowed): ?>
+                                    <span class="pill pill-warn" style="font-size:.7rem;padding:.1rem .4rem" title="Parent staat op '<?= htmlspecialchars($frequencies[$parentFreq] ?? $parentFreq) ?>', dus deze subtaak draait ook maar zo vaak.">⚠ geremd</span>
+                                <?php endif; ?>
                             <?php endforeach; ?>
                         </div>
+                        <?php if ($hasShadowed): ?>
+                            <div class="warn-box">
+                                ⚠ Eén of meer subtaken hebben een hogere frequentie dan de parent ("<?= htmlspecialchars($frequencies[$parentFreq] ?? $parentFreq) ?>").
+                                De parent bepaalt wanneer de hele taak verschijnt — die subtaken draaien dus niet vaker dan de parent.
+                            </div>
+                        <?php endif; ?>
                     <?php endif; ?>
                 </div>
                 <div class="actions">
