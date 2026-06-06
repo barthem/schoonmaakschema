@@ -1,43 +1,43 @@
-[
-    { "name": "Harry onderhouden + draaien", "fixed_to": "Bart", "frequency": "weekly", "subtasks": [] },
-    {
-        "name": "Vuilnis Keuken wegbrengen",
-        "fixed_to": null,
-        "frequency": "weekly",
-        "subtasks": [
-            { "name": "Plastic afval", "frequency": "weekly" },
-            { "name": "Vuilnisbak", "frequency": "weekly" },
-            { "name": "Karton", "frequency": "biweekly" }
-        ]
-    },
-    { "name": "Badkamer schoonmaken", "fixed_to": "Mara", "frequency": "weekly", "subtasks": [] },
-    { "name": "Trap naar boven schoonmaken", "fixed_to": "Erin", "frequency": "weekly", "subtasks": [] },
-    {
-        "name": "WC schoonmaken",
-        "fixed_to": "Mara",
-        "frequency": "weekly",
-        "subtasks": [
-            { "name": "Vloer", "frequency": "weekly" },
-            { "name": "WC", "frequency": "weekly" },
-            { "name": "Vuilniszak", "frequency": "weekly" }
-        ]
-    },
-    { "name": "Keuken schoonmaken", "fixed_to": null, "frequency": "weekly", "subtasks": [
-            { "name": "magnetron", "frequency": "weekly" },
-            { "name": "gasfurnouce", "frequency": "weekly" },
-            { "name": "kastjes/muur", "frequency": "weekly" }
-    ] },
-    { "name": "kattenbak legen/vullen", "fixed_to": "Erin", "frequency": "weekly", "subtasks": [] },
-    { "name": "Trap naar beneden/halletje schoonmaken", "fixed_to": null, "frequency": "weekly", "subtasks": [] },
-    { "name": "woonkamer stoffen/stofzuigen", "fixed_to": null, "frequency": "weekly", "subtasks": [] },
-    { "name": "witte trapleuning naar boven afnemen", "fixed_to": null, "frequency": "biweekly", "subtasks": [] },
-    { "name": "Glas wegbrengen naar glasbak", "fixed_to": null, "frequency": "biweekly", "subtasks": [] },
-    { "name": "keukendoek vervangen", "fixed_to": null, "frequency": "weekly", "subtasks": [
-            { "name": "vaatdoekje", "frequency": "weekly" },
-            { "name": "thee/handdoek", "frequency": "weekly" }
-
-    ] },
-    { "name": "waterbak filter vervangen/ontslimen", "fixed_to": null, "frequency": "montly", "subtasks": [] }
-
-
-]
+{
+    "mode": "vergeten",
+    "taken": [
+        { "name": "Harry onderhouden + draaien", "fixed_to": "Bart", "frequency": "weekly", "subtasks": [] },
+        {
+            "name": "Vuilnis Keuken wegbrengen",
+            "fixed_to": null,
+            "frequency": "weekly",
+            "subtasks": [
+                { "name": "Plastic afval", "frequency": "weekly" },
+                { "name": "Vuilnisbak", "frequency": "weekly" },
+                { "name": "Karton", "frequency": "biweekly" }
+            ]
+        },
+        { "name": "Badkamer schoonmaken", "fixed_to": "Mara", "frequency": "weekly", "subtasks": [] },
+        { "name": "Trap naar boven schoonmaken", "fixed_to": "Erin", "frequency": "weekly", "subtasks": [] },
+        {
+            "name": "WC schoonmaken",
+            "fixed_to": "Mara",
+            "frequency": "weekly",
+            "subtasks": [
+                { "name": "Vloer", "frequency": "weekly" },
+                { "name": "WC", "frequency": "weekly" },
+                { "name": "Vuilniszak", "frequency": "weekly" }
+            ]
+        },
+        { "name": "Keuken schoonmaken", "fixed_to": null, "frequency": "weekly", "subtasks": [
+                { "name": "magnetron", "frequency": "weekly" },
+                { "name": "gasfurnouce", "frequency": "weekly" },
+                { "name": "kastjes/muur", "frequency": "weekly" }
+        ] },
+        { "name": "kattenbak legen/vullen", "fixed_to": "Erin", "frequency": "weekly", "subtasks": [] },
+        { "name": "Trap naar beneden/halletje schoonmaken", "fixed_to": null, "frequency": "weekly", "subtasks": [] },
+        { "name": "woonkamer stoffen/stofzuigen", "fixed_to": null, "frequency": "weekly", "subtasks": [] },
+        { "name": "witte trapleuning naar boven afnemen", "fixed_to": null, "frequency": "biweekly", "subtasks": [] },
+        { "name": "Glas wegbrengen naar glasbak", "fixed_to": null, "frequency": "biweekly", "subtasks": [] },
+        { "name": "keukendoek vervangen", "fixed_to": null, "frequency": "weekly", "subtasks": [
+                { "name": "vaatdoekje", "frequency": "weekly" },
+                { "name": "thee/handdoek", "frequency": "weekly" }
+        ] },
+        { "name": "waterbak filter vervangen", "fixed_to": null, "frequency": "monthly", "subtasks": [] }
+    ]
+}

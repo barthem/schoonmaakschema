@@ -76,11 +76,17 @@ $sunday = date('d-m-Y', strtotime("sunday this week", $targetDate));
 <!DOCTYPE html>
 <html lang="nl">
 <head>
+  <script>(function(){try{var m=document.cookie.match(/(?:^|; )theme=([^;]+)/);var t=m?m[1]:(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+  function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-theme')==='dark'?'light':'dark';h.setAttribute('data-theme',n);document.cookie='theme='+n+';path=/;max-age=31536000;samesite=lax';}</script>
   <meta charset="utf-8">
   <title>Afwasrooster</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     :root { color-scheme: light dark; }
+    html[data-theme="dark"]{ color-scheme: dark; }
+    html[data-theme="light"]{ color-scheme: light; }
+    .theme-toggle{cursor:pointer;border:1px solid #8888;background:transparent;color:inherit;border-radius:.3rem;padding:.4rem .7rem;font-size:1rem;line-height:1}
+    .theme-toggle:hover{border-color:currentColor}
     html, body { height: 100%; margin: 0; }
     body {
       display: grid;
@@ -93,7 +99,7 @@ $sunday = date('d-m-Y', strtotime("sunday this week", $targetDate));
     .wrap { width: min(720px, 100%); }
     h1 { margin: 0 0 .4rem; font-size: clamp(1.25rem, 2.8vw, 1.7rem); }
     .meta { margin: 0 0 1rem; color: #666; font-size: .95rem; }
-    @media (prefers-color-scheme: dark) { .meta { color: #999; } }
+    html[data-theme="dark"] .meta { color: #999; }
 
     .nav-buttons {
       display: flex;
@@ -115,15 +121,13 @@ $sunday = date('d-m-Y', strtotime("sunday this week", $targetDate));
       background: #eff6ff;
       border-color: #3b82f6;
     }
-    @media (prefers-color-scheme: dark) {
-      .nav-buttons a {
-        color: #60a5fa;
-        border-color: #374151;
-      }
-      .nav-buttons a:hover {
-        background: #1e3a5f;
-        border-color: #60a5fa;
-      }
+    html[data-theme="dark"] .nav-buttons a {
+      color: #60a5fa;
+      border-color: #374151;
+    }
+    html[data-theme="dark"] .nav-buttons a:hover {
+      background: #1e3a5f;
+      border-color: #60a5fa;
     }
 
     table { border-collapse: collapse; width: 100%; }
@@ -138,13 +142,11 @@ $sunday = date('d-m-Y', strtotime("sunday this week", $targetDate));
     }
     caption { caption-side: bottom; font-size: .95rem; color: #666; padding-top: .5rem; }
 
-    @media (prefers-color-scheme: dark) {
-      th, td { border-color: #444; }
-      th { background: #111; }
-      tbody tr:nth-child(odd) td { background: #0d0d0d; }
-      .weekend td { background: #261a00; }
-      caption { color: #999; }
-    }
+    html[data-theme="dark"] th, html[data-theme="dark"] td { border-color: #444; }
+    html[data-theme="dark"] th { background: #111; }
+    html[data-theme="dark"] tbody tr:nth-child(odd) td { background: #0d0d0d; }
+    html[data-theme="dark"] .weekend td { background: #261a00; }
+    html[data-theme="dark"] caption { color: #999; }
 
     /* Mobiel: cards per dag */
     @media (max-width: 640px) {
@@ -159,7 +161,7 @@ $sunday = date('d-m-Y', strtotime("sunday this week", $targetDate));
         padding: .4rem .6rem;
         margin-bottom: .9rem;
       }
-      @media (prefers-color-scheme: dark) { tr { border-color: #444; } }
+      html[data-theme="dark"] tr { border-color: #444; }
       td {
         border: none;
         border-bottom: 1px solid #e0e0e0;
@@ -186,6 +188,7 @@ $sunday = date('d-m-Y', strtotime("sunday this week", $targetDate));
     </p>
 
     <div class="nav-buttons">
+      <button type="button" onclick="toggleTheme()" class="theme-toggle" aria-label="Wissel licht of donker thema" title="Licht / donker">🌓</button>
       <?php if ($weekOffset !== 0): ?>
         <a href="?">Huidige week</a>
       <?php endif; ?>

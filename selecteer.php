@@ -16,6 +16,8 @@ if (is_file($peopleFile)) {
 <!DOCTYPE html>
 <html lang="nl">
 <head>
+    <script>(function(){try{var m=document.cookie.match(/(?:^|; )theme=([^;]+)/);var t=m?m[1]:(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+    function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-theme')==='dark'?'light':'dark';h.setAttribute('data-theme',n);document.cookie='theme='+n+';path=/;max-age=31536000;samesite=lax';}</script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Kies je profiel</title>
@@ -101,9 +103,21 @@ if (is_file($peopleFile)) {
             color: #6b7280;
             font-size: .95rem;
         }
+
+        /* Dark mode */
+        html[data-theme="dark"]{--bg:#0f172a;--card:#1e293b;--text:#e2e8f0;--accent:#3b82f6;--shadow:0 2px 8px rgba(0,0,0,.5)}
+        html[data-theme="dark"] p.lead,html[data-theme="dark"] .sub,html[data-theme="dark"] .footer-note{color:#94a3b8}
+        html[data-theme="dark"] .empty{background:#1e293b;color:#e2e8f0}
+        html[data-theme="dark"] pre{color:#e2e8f0}
+        .topbar{display:flex;justify-content:flex-end;max-width:800px;margin:0 auto 6px}
+        .theme-toggle{cursor:pointer;border:1px solid #8888;background:transparent;color:inherit;border-radius:8px;padding:6px 10px;font-size:1rem;line-height:1}
+        .theme-toggle:hover{border-color:currentColor}
     </style>
 </head>
 <body>
+    <div class="topbar">
+        <button type="button" onclick="toggleTheme()" class="theme-toggle" aria-label="Wissel licht of donker thema" title="Licht / donker">🌓</button>
+    </div>
     <header>
         <h1>Wie ben je?</h1>
         <p class="lead">Kies je naam om je taken te bekijken en af te vinken.</p>

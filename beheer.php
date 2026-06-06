@@ -19,8 +19,21 @@ function readJson(string $path, $fallback) {
 function writeJson(string $path, $data): void {
     file_put_contents($path, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 }
+// Schrijf taken terug in het { "mode": ..., "taken": [...] } omhulsel, zodat de
+// gekozen boetemodus (geld/vergeten) niet verloren gaat bij elke taakbewerking.
+function writeTasks(string $path, array $tasks, string $mode): void {
+    writeJson($path, ['mode' => $mode === 'vergeten' ? 'vergeten' : 'geld', 'taken' => array_values($tasks)]);
+}
 
-$tasks = readJson($tasksFile, []);
+// taken.json kan een platte array (legacy) of { "mode": ..., "taken": [...] } zijn.
+$tasksRaw = readJson($tasksFile, []);
+if (is_array($tasksRaw) && isset($tasksRaw['taken']) && is_array($tasksRaw['taken'])) {
+    $taskMode = (($tasksRaw['mode'] ?? 'geld') === 'vergeten') ? 'vergeten' : 'geld';
+    $tasks    = array_values($tasksRaw['taken']);
+} else {
+    $taskMode = 'geld';
+    $tasks    = is_array($tasksRaw) ? $tasksRaw : [];
+}
 $people = readJson($peopleFile, []);
 $personKeys = array_keys($people);
 $frequencies = ['weekly' => 'Wekelijks', 'biweekly' => '2-wekelijks', 'monthly' => 'Maandelijks'];
@@ -39,7 +52,7 @@ function fixedToList($fixedTo, array $people): array {
 
 // Huidige week-status laden (zelfde startdatum als schoonmaak.php) zodat we kunnen
 // tonen wie multi-pinned taken deze week heeft gekregen.
-$startDate = new DateTime('2025-09-06');
+$startDate = new DateTime('2026-05-30'); // zelfde startdatum als schoonmaak.php (start nieuwe rooster)
 $today     = new DateTime('today');
 $wIndex    = intdiv(max(0, (int)$startDate->diff($today)->days), 7);
 $currentWeekStatus = readJson(__DIR__ . "/status/status_{$wIndex}.json", []);
@@ -101,7 +114,7 @@ if ($authenticated && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if (isset($tasks[$idx])) {
             $deletedName = $tasks[$idx]['name'];
             array_splice($tasks, $idx, 1);
-            writeJson($tasksFile, $tasks);
+            writeTasks($tasksFile, $tasks, $taskMode);
             $flash = "'{$deletedName}' verwijderd.";
         }
     }
@@ -135,7 +148,7 @@ if ($authenticated && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 'subtasks' => []
             ];
             $tasks[] = $newTask;
-            writeJson($tasksFile, $tasks);
+            writeTasks($tasksFile, $tasks, $taskMode);
             $flash = "'{$name}' toegevoegd.";
         }
     }
@@ -168,7 +181,7 @@ if ($authenticated && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     'frequency' => $freq,
                     'subtasks' => $subtasks
                 ];
-                writeJson($tasksFile, $tasks);
+                writeTasks($tasksFile, $tasks, $taskMode);
                 $flash = "'{$name}' opgeslagen.";
             }
         }
@@ -180,7 +193,7 @@ if ($authenticated && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($name !== '') {
             $key = $name; // key = naam
             if (!isset($people[$key])) {
-                $people[$key] = ['name' => $name, 'missed' => 0];
+                $people[$key] = ['name' => $name, 'missed' => 0, 'streak' => 0];
                 writeJson($peopleFile, $people);
                 $personKeys = array_keys($people);
                 $flash = "'{$name}' toegevoegd als huisgenoot.";
@@ -209,8 +222,23 @@ if ($authenticated && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $missed = max(0, (int)($_POST['missed'] ?? 0));
         if ($key !== '' && isset($people[$key])) {
             $people[$key]['missed'] = $missed;
+            if (isset($_POST['streak'])) {
+                $people[$key]['streak'] = max(0, (int)$_POST['streak']);
+            }
             writeJson($peopleFile, $people);
-            $flash = "Gemiste weken van '{$people[$key]['name']}' gezet op {$missed}.";
+            $flash = "Tellers van '{$people[$key]['name']}' bijgewerkt.";
+        }
+    }
+
+    // Reeks-zichtbaarheid per persoon aan/uit (verbergt 'Jouw reeks' + 'Reeks per huisgenoot' op diens takenpagina)
+    if ($action === 'toggle_hide_streak') {
+        $key = $_POST['person_key'] ?? '';
+        if ($key !== '' && isset($people[$key])) {
+            $people[$key]['hide_streak'] = empty($people[$key]['hide_streak']);
+            writeJson($peopleFile, $people);
+            $flash = $people[$key]['hide_streak']
+                ? "Reeks verborgen voor '{$people[$key]['name']}'."
+                : "Reeks weer zichtbaar voor '{$people[$key]['name']}'.";
         }
     }
 
@@ -218,10 +246,18 @@ if ($authenticated && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'reset_pot') {
         foreach ($people as &$p) {
             $p['missed'] = 0;
+            $p['streak'] = 0;
         }
         unset($p);
         writeJson($peopleFile, $people);
         $flash = 'Pot gereset — alle tellers op 0.';
+    }
+
+    // Boetemodus wisselen (geld <-> vergeten); herschrijft taken.json met behoud van de taken
+    if ($action === 'set_mode') {
+        $taskMode = (($_POST['mode'] ?? 'geld') === 'vergeten') ? 'vergeten' : 'geld';
+        writeTasks($tasksFile, $tasks, $taskMode);
+        $flash = 'Modus gezet op ' . ($taskMode === 'vergeten' ? 'vergeten-teller' : 'geld (pot)') . '.';
     }
 
     // PRG na elke actie (behalve passcode login die hierboven al is afgehandeld)
@@ -239,6 +275,8 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
 <!DOCTYPE html>
 <html lang="nl">
 <head>
+    <script>(function(){try{var m=document.cookie.match(/(?:^|; )theme=([^;]+)/);var t=m?m[1]:(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+    function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-theme')==='dark'?'light':'dark';h.setAttribute('data-theme',n);document.cookie='theme='+n+';path=/;max-age=31536000;samesite=lax';}</script>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Takenbeheer</title>
@@ -295,6 +333,15 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
         .bar{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
 
         @media(max-width:520px){body{padding:14px}.subtask-row{flex-wrap:wrap}.subtask-row select{flex:1}}
+
+        /* Dark mode */
+        html[data-theme="dark"]{--bg:#0f172a;--card:#1e293b;--text:#e2e8f0;--muted:#94a3b8;--accent:#3b82f6;--danger:#f87171;--shadow:0 2px 10px rgba(0,0,0,.5)}
+        html[data-theme="dark"] input[type=text],html[data-theme="dark"] input[type=number],html[data-theme="dark"] select{background:#0f172a;color:#e2e8f0;border-color:#334155}
+        html[data-theme="dark"] .btn-secondary{background:#334155;color:#e2e8f0}
+        html[data-theme="dark"] .pin-check{background:#0f172a;color:#e2e8f0;border-color:#334155}
+        html[data-theme="dark"] [style*="background:#f9fafb"]{background:#0f172a !important}
+        .theme-toggle{cursor:pointer;border:1px solid #8888;background:transparent;color:inherit;border-radius:8px;padding:8px 14px;font-size:.95rem;line-height:1;font-weight:700}
+        .theme-toggle:hover{border-color:currentColor}
     </style>
 </head>
 <body>
@@ -304,6 +351,7 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
     <!-- ========== LOGIN ========== -->
     <div class="login-box">
         <h1>Takenbeheer</h1>
+        <div style="text-align:center;margin-bottom:10px"><button type="button" onclick="toggleTheme()" class="theme-toggle" aria-label="Wissel licht of donker thema" title="Licht / donker">🌓</button></div>
         <?php if (!empty($authError)): ?>
             <div class="error"><?= htmlspecialchars($authError) ?></div>
         <?php endif; ?>
@@ -322,7 +370,10 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
     <?php $t = $tasks[$editIdx]; ?>
     <div class="bar">
         <h1>Taak bewerken</h1>
-        <a href="beheer.php" class="btn btn-secondary">Terug</a>
+        <div class="actions">
+            <button type="button" onclick="toggleTheme()" class="theme-toggle" aria-label="Wissel licht of donker thema" title="Licht / donker">🌓</button>
+            <a href="beheer.php" class="btn btn-secondary">Terug</a>
+        </div>
     </div>
 
     <div class="card">
@@ -423,6 +474,7 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
     <div class="bar">
         <h1>Takenbeheer</h1>
         <div class="actions">
+            <button type="button" onclick="toggleTheme()" class="theme-toggle" aria-label="Wissel licht of donker thema" title="Licht / donker">🌓</button>
             <a href="index.php" class="btn btn-secondary">Menu</a>
             <form method="post" style="margin:0">
                 <input type="hidden" name="action" value="logout_beheer" />
@@ -438,6 +490,20 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
     <?php if ($flash): ?>
         <div class="<?= $flashType === 'error' ? 'error' : 'flash' ?>"><?= htmlspecialchars($flash) ?></div>
     <?php endif; ?>
+
+    <!-- Boetemodus wisselen -->
+    <div class="card">
+        <h2 style="margin-top:0">Boetemodus</h2>
+        <div class="muted" style="margin-bottom:10px">
+            Bepaalt wat de schoonmaakpagina toont. <strong>Geld</strong> = pot van &euro;5 per gemiste week.
+            <strong>Vergeten-teller</strong> = hoe vaak iemand achter elkaar een week vergat. Beide tellers blijven altijd doorlopen, dus wisselen kost geen data.
+        </div>
+        <form method="post" class="actions">
+            <input type="hidden" name="action" value="set_mode" />
+            <button type="submit" name="mode" value="geld" class="btn <?= $taskMode === 'geld' ? 'btn-primary' : 'btn-secondary' ?>">💶 Geld (pot)<?= $taskMode === 'geld' ? ' ✓' : '' ?></button>
+            <button type="submit" name="mode" value="vergeten" class="btn <?= $taskMode === 'vergeten' ? 'btn-primary' : 'btn-secondary' ?>">🔁 Vergeten-teller<?= $taskMode === 'vergeten' ? ' ✓' : '' ?></button>
+        </form>
+    </div>
 
     <!-- Nieuwe taak toevoegen -->
     <div class="card">
@@ -545,16 +611,22 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:12px">
             <?php foreach ($people as $pk => $p):
                 $missed = (int)($p['missed'] ?? 0);
+                $streakVal = (int)($p['streak'] ?? 0);
                 $pot = $missed * 5;
             ?>
                 <div style="background:#f9fafb;border-radius:8px;padding:10px">
                     <div style="font-weight:700"><?= htmlspecialchars($p['name']) ?></div>
-                    <div class="muted">Gemist: <?= $missed ?> weken</div>
+                    <div class="muted">Gemist: <?= $missed ?> weken · Reeks: <?= $streakVal ?>×</div>
                     <div style="font-weight:800;color:#dc2626;font-size:1.1rem">&euro;<?= $pot ?></div>
-                    <form method="post" style="margin-top:6px;display:flex;gap:6px;align-items:center">
+                    <form method="post" style="margin-top:6px;display:flex;gap:8px;align-items:end;flex-wrap:wrap">
                         <input type="hidden" name="action" value="set_missed" />
                         <input type="hidden" name="person_key" value="<?= htmlspecialchars($pk) ?>" />
-                        <input type="number" name="missed" value="<?= $missed ?>" min="0" style="width:70px;padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem" />
+                        <label style="margin:0;font-weight:500;font-size:.78rem">Gemist
+                            <input type="number" name="missed" value="<?= $missed ?>" min="0" style="display:block;width:64px;padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem" />
+                        </label>
+                        <label style="margin:0;font-weight:500;font-size:.78rem">Reeks
+                            <input type="number" name="streak" value="<?= $streakVal ?>" min="0" style="display:block;width:64px;padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:.9rem" />
+                        </label>
                         <button type="submit" class="btn btn-secondary btn-sm">Opslaan</button>
                     </form>
                 </div>
@@ -587,14 +659,23 @@ $editIdx = isset($_GET['edit']) ? (int)$_GET['edit'] : null;
             </div>
             <button type="submit" class="btn btn-primary">Toevoegen</button>
         </form>
-        <?php foreach ($people as $pk => $p): ?>
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid #f3f4f6">
+        <?php foreach ($people as $pk => $p): $hidden = !empty($p['hide_streak']); ?>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid #f3f4f6">
                 <span style="font-weight:600"><?= htmlspecialchars($p['name']) ?></span>
-                <form method="post" style="margin:0" onsubmit="return confirm('Weet je zeker dat je \'<?= htmlspecialchars(addslashes($p['name'])) ?>\' wilt verwijderen?')">
-                    <input type="hidden" name="action" value="delete_person" />
-                    <input type="hidden" name="person_key" value="<?= htmlspecialchars($pk) ?>" />
-                    <button type="submit" class="btn btn-danger btn-sm">Verwijderen</button>
-                </form>
+                <div class="actions">
+                    <form method="post" style="margin:0">
+                        <input type="hidden" name="action" value="toggle_hide_streak" />
+                        <input type="hidden" name="person_key" value="<?= htmlspecialchars($pk) ?>" />
+                        <button type="submit" class="btn btn-sm <?= $hidden ? 'btn-primary' : 'btn-secondary' ?>" title="Klik om te wisselen of deze persoon de reeks ziet op de takenpagina">
+                            <?= $hidden ? '🙈 reeks verborgen' : '👁 reeks zichtbaar' ?>
+                        </button>
+                    </form>
+                    <form method="post" style="margin:0" onsubmit="return confirm('Weet je zeker dat je \'<?= htmlspecialchars(addslashes($p['name'])) ?>\' wilt verwijderen?')">
+                        <input type="hidden" name="action" value="delete_person" />
+                        <input type="hidden" name="person_key" value="<?= htmlspecialchars($pk) ?>" />
+                        <button type="submit" class="btn btn-danger btn-sm">Verwijderen</button>
+                    </form>
+                </div>
             </div>
         <?php endforeach; ?>
     </div>

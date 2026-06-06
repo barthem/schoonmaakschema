@@ -25,7 +25,7 @@ if (!is_dir($statusDir)) {
 }
 
 // Vaste start (bijv. een vrijdag). Weekindex = floor(days/7) vanaf deze datum.
-$startDate  = new DateTime('2025-09-06'); // <-- pas aan naar jullie echte startdatum. 05-09 is een vrijdag, 06-09 is een zaterdag
+$startDate  = new DateTime('2026-05-30'); // Startdatum nieuwe rooster (zaterdag). Weekindex 0 begint hier; geen historie/boetes vóór deze datum.
 
 /* ========== Helpers ========== */
 function statusPath(int $week): string {
@@ -338,7 +338,21 @@ function allStatusIndices(): array {
 
 /* ========== Data laden ========== */
 $people = readJson($peopleFile, []);
-$tasks  = readJson($tasksFile, []);
+
+// taken.json kent twee vormen:
+//  - legacy: een platte array van taken                       → modus 'geld'
+//  - nieuw : { "mode": "geld"|"vergeten", "taken": [ ... ] }  → modus uit 'mode'
+// In 'geld'-modus telt de boetepot (missed * 5 euro); in 'vergeten'-modus telt
+// hoe vaak iemand ACHTER ELKAAR een week vergat (streak). Beide tellers lopen
+// altijd door, ongeacht de modus — wisselen kost dus geen data.
+$tasksRaw = readJson($tasksFile, []);
+if (is_array($tasksRaw) && isset($tasksRaw['taken']) && is_array($tasksRaw['taken'])) {
+    $penaltyMode = (($tasksRaw['mode'] ?? 'geld') === 'vergeten') ? 'vergeten' : 'geld';
+    $tasks       = array_values($tasksRaw['taken']);
+} else {
+    $penaltyMode = 'geld';
+    $tasks       = is_array($tasksRaw) ? $tasksRaw : [];
+}
 
 /* ========== Persoon (sessie) ========== */
 // vanuit selecteer.php kan person per POST gezet worden
@@ -391,7 +405,8 @@ foreach ($indices as $idx) {
         continue; // niks te doen of al afgerond
     }
 
-    $weekMissed = []; // personKey => true (max 1 boete per week)
+    $weekAssigned = []; // personKey => true: had deze week >=1 taak
+    $weekMissed   = []; // personKey => true: had deze week >=1 niet-afgevinkte taak
     $carryoverBiweekly = []; // niet-afgeronde biweekly taken voor volgende week
     
     foreach ($st as $taskName => $rec) {
@@ -400,7 +415,10 @@ foreach ($indices as $idx) {
         $done       = (bool)($rec['done'] ?? false);
         $frequency  = $rec['frequency'] ?? 'weekly';
         
-        if ($assignedTo && !$done) {
+        if (!$assignedTo) continue;
+        $weekAssigned[$assignedTo] = true;
+
+        if (!$done) {
             $weekMissed[$assignedTo] = true;
             
             // Biweekly/monthly taken die niet af zijn: doorschuiven naar volgende week
@@ -410,12 +428,17 @@ foreach ($indices as $idx) {
         }
     }
 
+    // Werk beide tellers bij voor iedereen die deze week taken had
     $changedPeople = false;
-    foreach (array_keys($weekMissed) as $p) {
-        if (isset($people[$p])) {
-            $people[$p]['missed'] = (int)($people[$p]['missed'] ?? 0) + 1;
-            $changedPeople = true;
+    foreach (array_keys($weekAssigned) as $p) {
+        if (!isset($people[$p])) continue;
+        if (isset($weekMissed[$p])) {
+            $people[$p]['missed'] = (int)($people[$p]['missed'] ?? 0) + 1; // cumulatief (geld-modus)
+            $people[$p]['streak'] = (int)($people[$p]['streak'] ?? 0) + 1; // op rij (vergeten-modus)
+        } else {
+            $people[$p]['streak'] = 0; // had taken en alles afgevinkt → reeks gebroken
         }
+        $changedPeople = true;
     }
 
     // Sla carry-over biweekly taken op
@@ -498,12 +521,22 @@ if ($showPrevious && $prevWeekIndex >= 0) {
 // Bereken totalen
 $meName = htmlspecialchars($people[$personKey]['name']);
 $missed = (int)($people[$personKey]['missed'] ?? 0);
+$streak = (int)($people[$personKey]['streak'] ?? 0);
 $myPot = $missed * 5;
 $totalPot = calculateTotalPot($people);
+
+// Sommige huisgenoten willen hun reeks niet zien (instelbaar in beheer via 'hide_streak')
+$hideStreakForMe = !empty($people[$personKey]['hide_streak']);
+
+// Voor de vergeten-modus: huisgenoten gesorteerd op langste reeks eerst
+$streakBoard = $people;
+uasort($streakBoard, fn($a, $b) => ((int)($b['streak'] ?? 0)) <=> ((int)($a['streak'] ?? 0)));
 ?>
 <!DOCTYPE html>
 <html lang="nl">
 <head>
+    <script>(function(){try{var m=document.cookie.match(/(?:^|; )theme=([^;]+)/);var t=m?m[1]:(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',t);}catch(e){}})();
+    function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-theme')==='dark'?'light':'dark';h.setAttribute('data-theme',n);document.cookie='theme='+n+';path=/;max-age=31536000;samesite=lax';}</script>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title><?= $meName ?> · Schoonmaaktaken</title>
@@ -530,11 +563,26 @@ $totalPot = calculateTotalPot($people);
         .btn-secondary{background:#e5e7eb;color:#111827}
         .money{font-weight:800;color:#dc2626}
         .money-big{font-size:1.2rem;color:#dc2626}
+        .streak{font-weight:800;font-size:1.8rem;color:#b45309}
+        .streak-list{list-style:none;margin:.5rem 0 0;padding:0}
+        .streak-list li{display:flex;justify-content:space-between;gap:10px;padding:.25rem 0;border-bottom:1px solid #eef2f7}
+        .streak-list li:last-child{border-bottom:none}
+        .streak-list .lead{color:#b45309;font-weight:800}
         .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
         .pot-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:16px}
         .frequency-badge{display:inline-block;font-size:.8rem;margin-left:6px}
         @media (max-width:520px){body{padding:14px}}
         .note{margin-top:10px;color:var(--muted);font-size:.92rem}
+
+        /* Dark mode */
+        html[data-theme="dark"]{--bg:#0f172a;--card:#1e293b;--text:#e2e8f0;--muted:#94a3b8;--accent:#3b82f6;--shadow:0 2px 10px rgba(0,0,0,.5)}
+        html[data-theme="dark"] .btn-secondary{background:#334155;color:#e2e8f0}
+        html[data-theme="dark"] .done{background:#14532d}
+        html[data-theme="dark"] .pot-cards .card{background:#1e293b !important}
+        html[data-theme="dark"] .streak{color:#fbbf24}
+        html[data-theme="dark"] .streak-list li{border-bottom-color:#334155}
+        .theme-toggle{cursor:pointer;border:1px solid #8888;background:transparent;color:inherit;border-radius:10px;padding:10px 12px;font-size:1rem;line-height:1;font-weight:700}
+        .theme-toggle:hover{border-color:currentColor}
     </style>
 </head>
 <body>
@@ -545,6 +593,7 @@ $totalPot = calculateTotalPot($people);
             <div class="muted">Wat was er en wie heeft het afgevinkt?</div>
         </div>
         <div class="bar">
+            <button type="button" onclick="toggleTheme()" class="theme-toggle" aria-label="Wissel licht of donker thema" title="Licht / donker">🌓</button>
             <a href="schoonmaak.php" class="btn btn-secondary">← Terug naar deze week</a>
             <a href="index.php" class="btn btn-secondary">Menu</a>
         </div>
@@ -593,9 +642,10 @@ $totalPot = calculateTotalPot($people);
     <header>
         <div>
             <h1><?= $meName ?> · jouw taken</h1>
-            <div class="muted">Weekindex: <span class="pill"><?= (int)$wIndex ?></span> · Start: <?= $startDate->format('Y-m-d') ?></div>
+            <div class="muted">Weekindex: <span class="pill"><?= (int)$wIndex ?></span> · Start: <?= $startDate->format('Y-m-d') ?> · Modus: <span class="pill"><?= $penaltyMode === 'vergeten' ? '🔁 vergeten-teller' : '💶 geld' ?></span></div>
         </div>
         <div class="bar">
+            <button type="button" onclick="toggleTheme()" class="theme-toggle" aria-label="Wissel licht of donker thema" title="Licht / donker">🌓</button>
             <a href="schoonmaak.php?view=vorige" class="btn btn-secondary">📅 Vorige week</a>
             <form method="post">
                 <input type="hidden" name="action" value="logout">
@@ -605,8 +655,27 @@ $totalPot = calculateTotalPot($people);
         </div>
     </header>
 
+    <?php if (!($penaltyMode === 'vergeten' && $hideStreakForMe)): ?>
     <div class="row">
         <div class="pot-cards">
+        <?php if ($penaltyMode === 'vergeten'): ?>
+            <div class="card">
+                <div><strong>Jouw reeks</strong></div>
+                <div class="muted">Weken op rij vergeten</div>
+                <div class="streak"><?= $streak ?>×</div>
+            </div>
+            <div class="card" style="background:linear-gradient(135deg, #fef3c7, #fffbeb);">
+                <div><strong>📊 Reeks per huisgenoot</strong></div>
+                <ul class="streak-list">
+                    <?php foreach ($streakBoard as $pk => $p): $ps = (int)($p['streak'] ?? 0); ?>
+                        <li>
+                            <span><?= htmlspecialchars($p['name']) ?><?= $pk === $personKey ? ' (jij)' : '' ?></span>
+                            <strong class="<?= $ps > 0 ? 'lead' : '' ?>"><?= $ps ?>×</strong>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+        <?php else: ?>
             <div class="card">
                 <div><strong>Jouw pot-stand</strong></div>
                 <div class="muted">Gemiste weken: <?= $missed ?></div>
@@ -617,8 +686,10 @@ $totalPot = calculateTotalPot($people);
                 <div class="muted">Alle huisgenoten samen</div>
                 <div class="money money-big">€<?= $totalPot ?></div>
             </div>
+        <?php endif; ?>
         </div>
     </div>
+    <?php endif; ?>
 
     <div class="row">
         <div class="grid">
